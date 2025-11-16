@@ -19,11 +19,11 @@ Isso geralmente acontece quando há problemas com aspas no comando de build.
 4. Role até **Build & Deploy**
 5. Em **Build Command**, **DELETE** qualquer comando existente e digite:
    ```
-   npm install && npm run build
+   NODE_ENV=development npm install && npm run build
    ```
    (sem aspas, sem backticks)
    
-   **Importante:** O Render precisa instalar as devDependencies para compilar TypeScript!
+   **Importante:** O `NODE_ENV=development` força a instalação das devDependencies necessárias para compilar TypeScript!
 6. Em **Start Command**, digite:
    ```
    npm start
