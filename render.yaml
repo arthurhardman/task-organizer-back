@@ -13,9 +13,13 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
-      - key: STRIPE_SECRET_KEY
+      - key: GGCHECKOUT_API_URL
+        value: https://api.ggcheckout.com
+      - key: GGCHECKOUT_API_KEY
         sync: false
-      - key: STRIPE_WEBHOOK_SECRET
+      - key: GGCHECKOUT_PRODUCT_ID
+        sync: false
+      - key: GGCHECKOUT_WEBHOOK_SECRET
         sync: false
       - key: FRONTEND_URL
         sync: false
