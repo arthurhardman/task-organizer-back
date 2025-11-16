@@ -30,42 +30,89 @@ router.post('/webhook', express.json(), async (req, res) => {
   try {
     const { event, data } = req.body;
 
+    console.log('Webhook recebido:', { event, data });
+
     // Verificar assinatura do webhook (se GGCheckout fornecer)
     const webhookSecret = process.env.GGCHECKOUT_WEBHOOK_SECRET;
     if (webhookSecret) {
       const signature = req.headers['x-ggcheckout-signature'];
-      // Implementar verificação de assinatura se necessário
+      // TODO: Implementar verificação de assinatura se GGCheckout fornecer
+      // if (signature !== expectedSignature) {
+      //   return res.status(401).json({ error: 'Assinatura inválida' });
+      // }
     }
 
-    if (event === 'payment.completed' || event === 'payment.approved') {
-      const checkoutId = data.checkout_id || data.id;
+    if (event === 'payment.completed' || event === 'payment.approved' || event === 'checkout.completed') {
+      const checkoutId = data.checkout_id || data.id || data.checkout_id;
       const userId = data.metadata?.user_id;
+      const customerEmail = data.customer?.email || data.email || data.customer_email;
 
-      if (!userId || !checkoutId) {
-        return res.status(400).json({ error: 'Dados incompletos' });
+      console.log('Processando pagamento:', { checkoutId, userId, customerEmail });
+
+      // Tentar identificar o usuário
+      let targetUserId = userId;
+
+      // Se não tiver user_id no metadata, tentar buscar pelo email
+      if (!targetUserId && customerEmail) {
+        const userResult = await pool.query(
+          'SELECT id FROM users WHERE email = $1',
+          [customerEmail]
+        );
+        if (userResult.rows.length > 0) {
+          targetUserId = userResult.rows[0].id;
+          console.log('Usuário encontrado pelo email:', targetUserId);
+        }
+      }
+
+      // Se ainda não tiver user_id, tentar buscar pela subscription existente
+      if (!targetUserId && checkoutId) {
+        const subResult = await pool.query(
+          'SELECT user_id FROM subscriptions WHERE ggcheckout_checkout_id = $1',
+          [checkoutId]
+        );
+        if (subResult.rows.length > 0) {
+          targetUserId = subResult.rows[0].user_id;
+          console.log('Usuário encontrado pela subscription:', targetUserId);
+        }
+      }
+
+      if (!targetUserId || !checkoutId) {
+        console.error('Dados incompletos no webhook:', { checkoutId, targetUserId, customerEmail });
+        return res.status(400).json({ 
+          error: 'Dados incompletos',
+          received: { checkoutId, userId, customerEmail }
+        });
       }
 
       try {
         // Atualizar usuário para premium
-        await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [userId]);
+        await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [targetUserId]);
+        console.log('Usuário atualizado para premium:', targetUserId);
 
-        // Atualizar status da subscription
+        // Criar ou atualizar subscription
         await pool.query(
-          `UPDATE subscriptions 
-           SET status = 'active', updated_at = CURRENT_TIMESTAMP
-           WHERE ggcheckout_checkout_id = $1`,
-          [checkoutId]
+          `INSERT INTO subscriptions (user_id, ggcheckout_checkout_id, status, amount, installments, created_at, updated_at)
+           VALUES ($1, $2, 'active', $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT (ggcheckout_checkout_id) 
+           DO UPDATE SET status = 'active', updated_at = CURRENT_TIMESTAMP`,
+          [
+            targetUserId,
+            checkoutId,
+            data.amount || 2500, // R$ 25,00 em centavos
+            data.installments || 1,
+          ]
         );
+        console.log('Subscription atualizada:', checkoutId);
       } catch (error) {
         console.error('Error updating subscription:', error);
         return res.status(500).json({ error: 'Erro ao atualizar assinatura' });
       }
     }
 
-    res.json({ received: true });
+    res.json({ received: true, event });
   } catch (error: any) {
     console.error('Webhook error:', error);
-    res.status(400).json({ error: 'Erro ao processar webhook' });
+    res.status(400).json({ error: 'Erro ao processar webhook', details: error.message });
   }
 });
 
