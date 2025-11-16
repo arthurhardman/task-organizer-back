@@ -13,10 +13,10 @@ O build está falhando porque as `devDependencies` (tipos TypeScript) não estã
 npm install && npm run build
 ```
 
-**Por quê?**
-- O Render por padrão instala devDependencies quando usa `npm install`
-- `npm ci` pode pular devDependencies em alguns casos
-- Precisamos das devDependencies para compilar TypeScript
+**Solução Implementada:**
+- Os tipos TypeScript (`@types/*`) e `typescript` foram movidos para `dependencies`
+- Isso garante que sejam sempre instalados, mesmo em produção
+- O Render agora consegue compilar o TypeScript corretamente
 
 **Explicação:**
 - `npm ci` instala todas as dependências (incluindo devDependencies)
