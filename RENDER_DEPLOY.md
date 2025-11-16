@@ -9,20 +9,29 @@ bash: -c: line 1: unexpected EOF while looking for matching ``'
 
 Isso geralmente acontece quando há problemas com aspas no comando de build.
 
-## ✅ Solução
+## ✅ Solução IMEDIATA (Recomendado)
 
-### Opção 1: Configurar via Dashboard do Render (Recomendado)
+### ⚠️ O render.yaml pode causar problemas. Configure MANUALMENTE no Dashboard:
 
-1. Acesse o dashboard do Render: https://dashboard.render.com
-2. Vá em seu serviço (Web Service)
-3. Em **Settings** > **Build Command**, configure:
+1. Acesse: https://dashboard.render.com
+2. Vá no seu serviço **task-organizer-api**
+3. Clique em **Settings** (no menu lateral)
+4. Role até **Build & Deploy**
+5. Em **Build Command**, **DELETE** qualquer comando existente e digite:
    ```
    npm install && npm run build
    ```
-4. Em **Settings** > **Start Command**, configure:
+   (sem aspas, sem backticks)
+6. Em **Start Command**, digite:
    ```
    npm start
    ```
+7. Em **Root Directory**, digite:
+   ```
+   backend
+   ```
+8. Clique em **Save Changes**
+9. Vá em **Manual Deploy** > **Deploy latest commit**
 
 ### Opção 2: Usar render.yaml (Atualizado)
 
