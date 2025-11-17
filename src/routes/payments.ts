@@ -161,7 +161,7 @@ router.post('/webhook', express.json(), async (req, res) => {
             webhookData?.payment?.amount || 
             webhookData?.amount || 
             webhookData?.value || 
-            2500; // R$ 25,00 em centavos (fallback)
+            2990; // R$ 29,90 em centavos (fallback)
 
           // Calcular data de expiração (1 mês a partir de agora)
           const expiresAt = new Date();
