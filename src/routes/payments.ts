@@ -156,12 +156,60 @@ router.post('/webhook', express.json(), async (req, res) => {
           await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [targetUserId]);
           console.log('✅ Usuário atualizado para premium:', targetUserId);
 
-          // Extrair amount do webhook (pode estar em payment.amount ou amount direto)
-          const amount = 
+          // Extrair amount do webhook (pode estar em vários lugares)
+          // Tentar múltiplos campos e formatos
+          const rawAmount = 
             webhookData?.payment?.amount || 
+            webhookData?.payment?.value ||
             webhookData?.amount || 
-            webhookData?.value || 
+            webhookData?.value ||
+            webhookData?.total ||
+            webhookData?.price ||
             2990; // R$ 29,90 em centavos (fallback)
+          
+          // Converter para centavos (inteiro) - garantir que seja sempre um inteiro
+          let amount: number;
+          if (typeof rawAmount === 'number') {
+            // Se for menor que 1, pode ser um decimal estranho ou valor incorreto
+            if (rawAmount < 1) {
+              // Valor muito pequeno ou incorreto, usar fallback
+              console.warn('Valor muito pequeno recebido do webhook:', rawAmount, 'usando fallback');
+              amount = 2990;
+            } else if (rawAmount < 100) {
+              // Está em reais (ex: 29.90), converter para centavos
+              amount = Math.round(rawAmount * 100);
+            } else {
+              // Já está em centavos (ex: 2990)
+              amount = Math.round(rawAmount);
+            }
+          } else if (typeof rawAmount === 'string') {
+            // Se for string, tentar parsear
+            const parsed = parseFloat(rawAmount);
+            if (isNaN(parsed)) {
+              console.warn('Não foi possível parsear amount como número:', rawAmount, 'usando fallback');
+              amount = 2990; // Fallback
+            } else if (parsed < 1) {
+              console.warn('Valor muito pequeno parseado:', parsed, 'usando fallback');
+              amount = 2990;
+            } else if (parsed < 100) {
+              // Está em reais, converter para centavos
+              amount = Math.round(parsed * 100);
+            } else {
+              // Já está em centavos
+              amount = Math.round(parsed);
+            }
+          } else {
+            console.warn('Tipo de amount não reconhecido:', typeof rawAmount, rawAmount, 'usando fallback');
+            amount = 2990; // Fallback
+          }
+          
+          // Garantir que amount seja um inteiro válido
+          if (!Number.isInteger(amount) || amount <= 0) {
+            console.warn('Amount inválido após normalização:', amount, 'usando fallback');
+            amount = 2990;
+          }
+          
+          console.log('Amount normalizado:', { rawAmount, amount, tipo: typeof rawAmount });
 
           // Calcular data de expiração (1 mês a partir de agora)
           const expiresAt = new Date();
