@@ -15,7 +15,29 @@ UPDATE users SET credits = 25 WHERE credits IS NULL;
 -- 4. Adicionar coluna due_time na tabela tasks (NOVA - para horário das tarefas)
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_time TIME;
 
--- 5. Atualizar subscriptions existentes sem expires_at para 1 mês a partir de created_at
+-- 5. Alterar tipo do campo amount de INTEGER para NUMERIC para suportar valores decimais
+-- Primeiro, converter dados existentes (multiplicar por 100 para manter centavos como inteiros temporariamente)
+DO $$
+BEGIN
+  -- Verificar se o campo é INTEGER antes de alterar
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'subscriptions' 
+    AND column_name = 'amount' 
+    AND data_type = 'integer'
+  ) THEN
+    -- Converter valores existentes para centavos (multiplicar por 100)
+    UPDATE subscriptions SET amount = amount * 100 WHERE amount IS NOT NULL;
+    
+    -- Alterar tipo para NUMERIC(10,2) para suportar valores decimais
+    ALTER TABLE subscriptions ALTER COLUMN amount TYPE NUMERIC(10,2);
+    
+    -- Converter valores de volta para reais (dividir por 100)
+    UPDATE subscriptions SET amount = amount / 100.0 WHERE amount IS NOT NULL;
+  END IF;
+END $$;
+
+-- 6. Atualizar subscriptions existentes sem expires_at para 1 mês a partir de created_at
 UPDATE subscriptions 
 SET expires_at = created_at + INTERVAL '1 month'
 WHERE expires_at IS NULL AND status = 'active';

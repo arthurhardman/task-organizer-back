@@ -184,6 +184,8 @@ router.post('/webhook', express.json(), async (req, res) => {
 
           // Identificar o plano baseado no ID do produto
           const BASIC_PLAN_CREDITS = 50;
+          const BASIC_PLAN_PRICE = 24.90;
+          const PREMIUM_PLAN_PRICE = 39.90;
           const BASIC_PRODUCT_ID = 'XMMYz9QVFTWABp3Jl3pQ';
           const PREMIUM_PRODUCT_ID = '3YmbtSMTrFkHujcQN8h8';
           
@@ -264,27 +266,55 @@ router.post('/webhook', express.json(), async (req, res) => {
             return date;
           })() : null;
 
-          // Extrair amount para salvar na subscription (opcional, apenas para registro)
-          const amount = webhookData?.payment?.amount || 
-                        webhookData?.products?.[0]?.price || 
-                        webhookData?.product?.price || 
-                        0;
+          // Usar valores fixos dos planos, independente do valor que vier do webhook
+          let amount: number;
+          if (isPremium) {
+            amount = PREMIUM_PLAN_PRICE;
+          } else if (isBasic) {
+            amount = BASIC_PLAN_PRICE;
+          } else {
+            // Fallback: tentar converter o valor do webhook, mas usar 0 se não conseguir
+            const webhookAmount = webhookData?.payment?.amount || 
+                                 webhookData?.products?.[0]?.price || 
+                                 webhookData?.product?.price || 
+                                 0;
+            // Converter para número, garantindo que seja válido
+            const parsedAmount = typeof webhookAmount === 'string' 
+              ? parseFloat(webhookAmount) 
+              : typeof webhookAmount === 'number' 
+                ? webhookAmount 
+                : 0;
+            amount = isNaN(parsedAmount) || parsedAmount <= 0 ? 0 : parsedAmount;
+          }
+
+          // Garantir que installments seja um número inteiro válido
+          const installments = parseInt(String(webhookData?.installments || 1), 10);
+          const validInstallments = isNaN(installments) || installments < 1 ? 1 : installments;
+
+          console.log('💰 Valores para subscription:', {
+            planName,
+            amount,
+            amountType: typeof amount,
+            installments: validInstallments,
+            expiresAt,
+            checkoutId
+          });
 
           // Criar ou atualizar subscription
           await pool.query(
             `INSERT INTO subscriptions (user_id, ggcheckout_checkout_id, status, amount, installments, expires_at, created_at, updated_at)
              VALUES ($1, $2, 'active', $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
              ON CONFLICT (ggcheckout_checkout_id) 
-             DO UPDATE SET status = 'active', expires_at = $5, updated_at = CURRENT_TIMESTAMP`,
+             DO UPDATE SET status = 'active', amount = $3, expires_at = $5, updated_at = CURRENT_TIMESTAMP`,
             [
               targetUserId,
               checkoutId,
-              amount || 0,
-              webhookData?.installments || 1,
+              amount,
+              validInstallments,
               expiresAt,
             ]
           );
-          console.log('✅ Subscription atualizada:', checkoutId);
+          console.log('✅ Subscription atualizada:', checkoutId, `(Plano: ${planName}, Valor: R$ ${amount.toFixed(2)})`);
         } catch (error) {
           console.error('❌ Error updating subscription:', error);
           return res.status(500).json({ error: 'Erro ao atualizar assinatura' });
