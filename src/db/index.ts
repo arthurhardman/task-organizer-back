@@ -18,6 +18,7 @@ export const initDatabase = async () => {
         name VARCHAR(255) NOT NULL,
         language VARCHAR(10) DEFAULT 'pt',
         is_premium BOOLEAN DEFAULT FALSE,
+        credits INTEGER DEFAULT 25,
         ggcheckout_customer_id VARCHAR(255),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

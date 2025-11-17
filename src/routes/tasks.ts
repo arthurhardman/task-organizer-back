@@ -1,6 +1,7 @@
 import express from 'express';
 import { pool } from '../db';
 import { authenticate, AuthRequest } from '../middleware/auth';
+import { hasEnoughCredits, consumeCredits } from '../utils/credits';
 
 const router = express.Router();
 
@@ -44,6 +45,24 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Título é obrigatório' });
     }
 
+    // Verificar e consumir créditos
+    const hasCredits = await hasEnoughCredits(req.userId!);
+    if (!hasCredits) {
+      return res.status(403).json({ 
+        error: 'Créditos insuficientes',
+        message: 'Você não tem créditos suficientes para criar uma tarefa. Faça upgrade para Premium ou aguarde a renovação de créditos.'
+      });
+    }
+
+    const creditResult = await consumeCredits(req.userId!);
+    if (!creditResult.success) {
+      return res.status(403).json({ 
+        error: 'Créditos insuficientes',
+        message: 'Você não tem créditos suficientes para criar uma tarefa.',
+        remaining: creditResult.remaining
+      });
+    }
+
     const result = await pool.query(
       `INSERT INTO tasks (user_id, title, description, status, priority, due_date)
        VALUES ($1, $2, $3, $4, $5, $6)
@@ -58,7 +77,10 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       ]
     );
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json({
+      ...result.rows[0],
+      creditsRemaining: creditResult.remaining,
+    });
   } catch (error) {
     res.status(500).json({ error: 'Erro ao criar tarefa' });
   }
@@ -68,6 +90,24 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
 router.put('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { title, description, status, priority, due_date, position } = req.body;
+
+    // Verificar e consumir créditos (apenas se não for premium)
+    const hasCredits = await hasEnoughCredits(req.userId!);
+    if (!hasCredits) {
+      return res.status(403).json({ 
+        error: 'Créditos insuficientes',
+        message: 'Você não tem créditos suficientes para editar uma tarefa.'
+      });
+    }
+
+    const creditResult = await consumeCredits(req.userId!);
+    if (!creditResult.success) {
+      return res.status(403).json({ 
+        error: 'Créditos insuficientes',
+        message: 'Você não tem créditos suficientes para editar uma tarefa.',
+        remaining: creditResult.remaining
+      });
+    }
 
     const result = await pool.query(
       `UPDATE tasks
@@ -96,7 +136,10 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
       return res.status(404).json({ error: 'Tarefa não encontrada' });
     }
 
-    res.json(result.rows[0]);
+    res.json({
+      ...result.rows[0],
+      creditsRemaining: creditResult.remaining,
+    });
   } catch (error) {
     res.status(500).json({ error: 'Erro ao atualizar tarefa' });
   }
@@ -105,6 +148,24 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
 // Delete task
 router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
+    // Verificar e consumir créditos (apenas se não for premium)
+    const hasCredits = await hasEnoughCredits(req.userId!);
+    if (!hasCredits) {
+      return res.status(403).json({ 
+        error: 'Créditos insuficientes',
+        message: 'Você não tem créditos suficientes para deletar uma tarefa.'
+      });
+    }
+
+    const creditResult = await consumeCredits(req.userId!);
+    if (!creditResult.success) {
+      return res.status(403).json({ 
+        error: 'Créditos insuficientes',
+        message: 'Você não tem créditos suficientes para deletar uma tarefa.',
+        remaining: creditResult.remaining
+      });
+    }
+
     const result = await pool.query(
       'DELETE FROM tasks WHERE id = $1 AND user_id = $2 RETURNING id',
       [req.params.id, req.userId]
@@ -114,7 +175,10 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
       return res.status(404).json({ error: 'Tarefa não encontrada' });
     }
 
-    res.json({ message: 'Tarefa deletada com sucesso' });
+    res.json({ 
+      message: 'Tarefa deletada com sucesso',
+      creditsRemaining: creditResult.remaining,
+    });
   } catch (error) {
     res.status(500).json({ error: 'Erro ao deletar tarefa' });
   }

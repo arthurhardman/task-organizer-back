@@ -8,10 +8,17 @@ CREATE TABLE IF NOT EXISTS users (
   name VARCHAR(255) NOT NULL,
   language VARCHAR(10) DEFAULT 'pt',
   is_premium BOOLEAN DEFAULT FALSE,
+  credits INTEGER DEFAULT 25,
   ggcheckout_customer_id VARCHAR(255),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Adicionar coluna credits se a tabela já existir
+ALTER TABLE users ADD COLUMN IF NOT EXISTS credits INTEGER DEFAULT 25;
+
+-- Inicializar créditos para usuários existentes sem créditos
+UPDATE users SET credits = 25 WHERE credits IS NULL;
 
 CREATE TABLE IF NOT EXISTS tasks (
   id SERIAL PRIMARY KEY,

@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { pool } from '../db';
 import { authenticate } from '../middleware/auth';
 import { updateUserPremiumStatus } from '../utils/subscription';
+import { getUserCredits, initializeCredits } from '../utils/credits';
 
 const router = express.Router();
 
@@ -19,8 +20,8 @@ router.post('/register', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
-      'INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3) RETURNING id, email, name',
-      [email, hashedPassword, name]
+      'INSERT INTO users (email, password_hash, name, credits) VALUES ($1, $2, $3, $4) RETURNING id, email, name',
+      [email, hashedPassword, name, 25] // 25 créditos iniciais
     );
 
     const user = result.rows[0];
@@ -31,7 +32,15 @@ router.post('/register', async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' } as jwt.SignOptions
     );
 
-    res.status(201).json({ user, token });
+    res.status(201).json({ 
+      user: {
+        ...user,
+        isPremium: false,
+        language: 'pt',
+        credits: 25,
+      },
+      token 
+    });
   } catch (error: any) {
     if (error.code === '23505') {
       return res.status(400).json({ error: 'Email já cadastrado' });
@@ -67,6 +76,10 @@ router.post('/login', async (req, res) => {
 
     // Verificar e atualizar status premium baseado na assinatura
     const isPremium = await updateUserPremiumStatus(user.id);
+    
+    // Inicializar créditos se necessário
+    await initializeCredits(user.id);
+    const credits = await getUserCredits(user.id);
 
     const secret = process.env.JWT_SECRET || 'default-secret-change-in-production';
     const token = jwt.sign(
@@ -82,6 +95,7 @@ router.post('/login', async (req, res) => {
         name: user.name,
         isPremium: isPremium,
         language: user.language,
+        credits: credits,
       },
       token,
     });
@@ -98,6 +112,10 @@ router.get('/me', authenticate, async (req, res) => {
     // Verificar e atualizar status premium
     const isPremium = await updateUserPremiumStatus(authReq.userId);
     
+    // Inicializar créditos se necessário
+    await initializeCredits(authReq.userId);
+    const credits = await getUserCredits(authReq.userId);
+    
     const result = await pool.query(
       'SELECT id, email, name, language FROM users WHERE id = $1',
       [authReq.userId]
@@ -113,6 +131,7 @@ router.get('/me', authenticate, async (req, res) => {
       name: result.rows[0].name,
       isPremium: isPremium,
       language: result.rows[0].language,
+      credits: credits,
     });
   } catch (error) {
     res.status(500).json({ error: 'Erro ao buscar usuário' });
