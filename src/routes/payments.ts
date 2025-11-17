@@ -251,22 +251,37 @@ router.get('/status', authenticate, async (req: AuthRequest, res) => {
     // Verificar e atualizar status premium
     const isPremium = await updateUserPremiumStatus(req.userId!);
     
-    const result = await pool.query(
-      `SELECT s.*
-       FROM subscriptions s
-       WHERE s.user_id = $1
-       ORDER BY s.created_at DESC
-       LIMIT 1`,
-      [req.userId]
-    );
+    // Verificar se a coluna expires_at existe
+    const columnCheck = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'subscriptions' AND column_name = 'expires_at'
+    `);
+    
+    const hasExpiresAt = columnCheck.rows.length > 0;
+    
+    // Construir query baseado na existência da coluna
+    const query = hasExpiresAt
+      ? `SELECT s.*
+         FROM subscriptions s
+         WHERE s.user_id = $1
+         ORDER BY s.created_at DESC
+         LIMIT 1`
+      : `SELECT id, user_id, ggcheckout_checkout_id, status, amount, currency, installments, created_at, updated_at
+         FROM subscriptions
+         WHERE user_id = $1
+         ORDER BY created_at DESC
+         LIMIT 1`;
+    
+    const result = await pool.query(query, [req.userId]);
 
     const subscription = result.rows[0] || null;
     
-    // Verificar se está expirada
+    // Verificar se está expirada (apenas se a coluna exists)
     let isExpired = false;
     let daysUntilExpiry = null;
     
-    if (subscription?.expires_at) {
+    if (hasExpiresAt && subscription?.expires_at) {
       const expiresAt = new Date(subscription.expires_at);
       const now = new Date();
       isExpired = expiresAt <= now;
@@ -281,11 +296,21 @@ router.get('/status', authenticate, async (req: AuthRequest, res) => {
       isPremium,
       subscription: subscription ? {
         ...subscription,
+        expires_at: subscription.expires_at || null,
         isExpired,
         daysUntilExpiry,
       } : null,
     });
-  } catch (error) {
+  } catch (error: any) {
+    // Se o erro for de coluna não encontrada, retornar resposta básica
+    if (error.code === '42703') {
+      console.warn('Column expires_at does not exist yet. Run migration script.');
+      return res.json({
+        isPremium: false,
+        subscription: null,
+      });
+    }
+    console.error('Error fetching subscription status:', error);
     res.status(500).json({ error: 'Erro ao buscar status' });
   }
 });
@@ -293,22 +318,44 @@ router.get('/status', authenticate, async (req: AuthRequest, res) => {
 // Get payment history
 router.get('/history', authenticate, async (req: AuthRequest, res) => {
   try {
-    const result = await pool.query(
-      `SELECT 
-        id,
-        ggcheckout_checkout_id,
-        status,
-        amount,
-        currency,
-        installments,
-        expires_at,
-        created_at,
-        updated_at
-       FROM subscriptions
-       WHERE user_id = $1
-       ORDER BY created_at DESC`,
-      [req.userId]
-    );
+    // Verificar se a coluna expires_at existe
+    const columnCheck = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'subscriptions' AND column_name = 'expires_at'
+    `);
+    
+    const hasExpiresAt = columnCheck.rows.length > 0;
+    
+    // Construir query baseado na existência da coluna
+    const query = hasExpiresAt
+      ? `SELECT 
+          id,
+          ggcheckout_checkout_id,
+          status,
+          amount,
+          currency,
+          installments,
+          expires_at,
+          created_at,
+          updated_at
+         FROM subscriptions
+         WHERE user_id = $1
+         ORDER BY created_at DESC`
+      : `SELECT 
+          id,
+          ggcheckout_checkout_id,
+          status,
+          amount,
+          currency,
+          installments,
+          created_at,
+          updated_at
+         FROM subscriptions
+         WHERE user_id = $1
+         ORDER BY created_at DESC`;
+    
+    const result = await pool.query(query, [req.userId]);
 
     const history = result.rows.map((row) => ({
       id: row.id,
@@ -317,14 +364,53 @@ router.get('/history', authenticate, async (req: AuthRequest, res) => {
       amount: row.amount,
       currency: row.currency,
       installments: row.installments,
-      expiresAt: row.expires_at,
+      expiresAt: hasExpiresAt ? (row.expires_at || null) : null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      isExpired: row.expires_at ? new Date(row.expires_at) <= new Date() : false,
+      isExpired: hasExpiresAt && row.expires_at ? new Date(row.expires_at) <= new Date() : false,
     }));
 
     res.json({ history });
-  } catch (error) {
+  } catch (error: any) {
+    // Se o erro for de coluna não encontrada, retornar histórico sem expires_at
+    if (error.code === '42703') {
+      console.warn('Column expires_at does not exist yet. Returning history without expiry info.');
+      try {
+        const result = await pool.query(
+          `SELECT 
+            id,
+            ggcheckout_checkout_id,
+            status,
+            amount,
+            currency,
+            installments,
+            created_at,
+            updated_at
+           FROM subscriptions
+           WHERE user_id = $1
+           ORDER BY created_at DESC`,
+          [req.userId]
+        );
+        
+        const history = result.rows.map((row) => ({
+          id: row.id,
+          checkoutId: row.ggcheckout_checkout_id,
+          status: row.status,
+          amount: row.amount,
+          currency: row.currency,
+          installments: row.installments,
+          expiresAt: null,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          isExpired: false,
+        }));
+        
+        return res.json({ history });
+      } catch (innerError) {
+        console.error('Error fetching payment history (fallback):', innerError);
+        return res.status(500).json({ error: 'Erro ao buscar histórico' });
+      }
+    }
     console.error('Error fetching payment history:', error);
     res.status(500).json({ error: 'Erro ao buscar histórico' });
   }

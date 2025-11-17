@@ -8,6 +8,20 @@ const CREDITS_PER_ACTION = 5;
  */
 export async function initializeCredits(userId: number): Promise<number> {
   try {
+    // Verificar se a coluna credits existe
+    const columnCheck = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' AND column_name = 'credits'
+    `);
+    
+    const hasCreditsColumn = columnCheck.rows.length > 0;
+    
+    if (!hasCreditsColumn) {
+      console.warn('Column credits does not exist yet. Run migration script.');
+      return INITIAL_CREDITS; // Retornar valor padrão temporariamente
+    }
+    
     const result = await pool.query(
       'SELECT credits FROM users WHERE id = $1',
       [userId]
@@ -27,9 +41,14 @@ export async function initializeCredits(userId: number): Promise<number> {
     }
 
     return result.rows[0].credits;
-  } catch (error) {
+  } catch (error: any) {
+    // Se o erro for de coluna não encontrada, retornar valor padrão
+    if (error.code === '42703') {
+      console.warn('Column credits does not exist yet. Run migration script.');
+      return INITIAL_CREDITS;
+    }
     console.error('Error initializing credits:', error);
-    return 0;
+    return INITIAL_CREDITS; // Retornar valor padrão em caso de erro
   }
 }
 
@@ -38,6 +57,21 @@ export async function initializeCredits(userId: number): Promise<number> {
  */
 export async function hasEnoughCredits(userId: number, required: number = CREDITS_PER_ACTION): Promise<boolean> {
   try {
+    // Verificar se a coluna credits existe
+    const columnCheck = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' AND column_name = 'credits'
+    `);
+    
+    const hasCreditsColumn = columnCheck.rows.length > 0;
+    
+    if (!hasCreditsColumn) {
+      // Se a coluna não existe, permitir ação (compatibilidade temporária)
+      console.warn('Column credits does not exist yet. Allowing action.');
+      return true;
+    }
+    
     const result = await pool.query(
       'SELECT credits, is_premium FROM users WHERE id = $1',
       [userId]
@@ -61,7 +95,12 @@ export async function hasEnoughCredits(userId: number, required: number = CREDIT
     }
 
     return credits >= required;
-  } catch (error) {
+  } catch (error: any) {
+    // Se o erro for de coluna não encontrada, permitir ação
+    if (error.code === '42703') {
+      console.warn('Column credits does not exist yet. Allowing action.');
+      return true;
+    }
     console.error('Error checking credits:', error);
     return false;
   }
@@ -72,6 +111,21 @@ export async function hasEnoughCredits(userId: number, required: number = CREDIT
  */
 export async function consumeCredits(userId: number, amount: number = CREDITS_PER_ACTION): Promise<{ success: boolean; remaining: number }> {
   try {
+    // Verificar se a coluna credits existe
+    const columnCheck = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' AND column_name = 'credits'
+    `);
+    
+    const hasCreditsColumn = columnCheck.rows.length > 0;
+    
+    if (!hasCreditsColumn) {
+      // Se a coluna não existe, permitir ação (compatibilidade temporária)
+      console.warn('Column credits does not exist yet. Allowing action.');
+      return { success: true, remaining: INITIAL_CREDITS };
+    }
+    
     const result = await pool.query(
       'SELECT credits, is_premium FROM users WHERE id = $1',
       [userId]
@@ -108,7 +162,12 @@ export async function consumeCredits(userId: number, amount: number = CREDITS_PE
     );
 
     return { success: true, remaining: newCredits };
-  } catch (error) {
+  } catch (error: any) {
+    // Se o erro for de coluna não encontrada, permitir ação
+    if (error.code === '42703') {
+      console.warn('Column credits does not exist yet. Allowing action.');
+      return { success: true, remaining: INITIAL_CREDITS };
+    }
     console.error('Error consuming credits:', error);
     return { success: false, remaining: 0 };
   }
@@ -119,6 +178,21 @@ export async function consumeCredits(userId: number, amount: number = CREDITS_PE
  */
 export async function getUserCredits(userId: number): Promise<number> {
   try {
+    // Verificar se a coluna credits existe
+    const columnCheck = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' AND column_name = 'credits'
+    `);
+    
+    const hasCreditsColumn = columnCheck.rows.length > 0;
+    
+    if (!hasCreditsColumn) {
+      // Se a coluna não existe, retornar valor padrão
+      console.warn('Column credits does not exist yet. Returning default value.');
+      return INITIAL_CREDITS;
+    }
+    
     const result = await pool.query(
       'SELECT credits, is_premium FROM users WHERE id = $1',
       [userId]
@@ -141,9 +215,14 @@ export async function getUserCredits(userId: number): Promise<number> {
     }
 
     return user.credits;
-  } catch (error) {
+  } catch (error: any) {
+    // Se o erro for de coluna não encontrada, retornar valor padrão
+    if (error.code === '42703') {
+      console.warn('Column credits does not exist yet. Returning default value.');
+      return INITIAL_CREDITS;
+    }
     console.error('Error getting user credits:', error);
-    return 0;
+    return INITIAL_CREDITS; // Retornar valor padrão em caso de erro
   }
 }
 

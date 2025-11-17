@@ -5,14 +5,29 @@ import { pool } from '../db';
  */
 export async function checkSubscriptionStatus(userId: number): Promise<boolean> {
   try {
-    const result = await pool.query(
-      `SELECT expires_at, status 
-       FROM subscriptions 
-       WHERE user_id = $1 AND status = 'active'
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [userId]
-    );
+    // Verificar se a coluna expires_at existe
+    const columnCheck = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'subscriptions' AND column_name = 'expires_at'
+    `);
+    
+    const hasExpiresAt = columnCheck.rows.length > 0;
+    
+    // Se não tem a coluna, usar query sem expires_at
+    const query = hasExpiresAt
+      ? `SELECT expires_at, status 
+         FROM subscriptions 
+         WHERE user_id = $1 AND status = 'active'
+         ORDER BY created_at DESC
+         LIMIT 1`
+      : `SELECT status 
+         FROM subscriptions 
+         WHERE user_id = $1 AND status = 'active'
+         ORDER BY created_at DESC
+         LIMIT 1`;
+    
+    const result = await pool.query(query, [userId]);
 
     if (result.rows.length === 0) {
       return false;
@@ -20,8 +35,8 @@ export async function checkSubscriptionStatus(userId: number): Promise<boolean> 
 
     const subscription = result.rows[0];
     
-    // Se não tem expires_at, considerar como ativo (compatibilidade com dados antigos)
-    if (!subscription.expires_at) {
+    // Se não tem expires_at (coluna não existe ou é null), considerar como ativo
+    if (!hasExpiresAt || !subscription.expires_at) {
       return true;
     }
 
@@ -30,7 +45,12 @@ export async function checkSubscriptionStatus(userId: number): Promise<boolean> 
     const now = new Date();
     
     return expiresAt > now;
-  } catch (error) {
+  } catch (error: any) {
+    // Se o erro for de coluna não encontrada, considerar como ativo (compatibilidade)
+    if (error.code === '42703') {
+      console.warn('Column expires_at does not exist yet. Run migration script.');
+      return true;
+    }
     console.error('Error checking subscription status:', error);
     return false;
   }
