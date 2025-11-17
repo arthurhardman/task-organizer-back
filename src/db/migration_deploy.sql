@@ -42,6 +42,23 @@ UPDATE subscriptions
 SET expires_at = created_at + INTERVAL '1 month'
 WHERE expires_at IS NULL AND status = 'active';
 
+-- 7. Criar tabela para colunas personalizadas do Kanban
+CREATE TABLE IF NOT EXISTS kanban_columns (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name VARCHAR(100) NOT NULL,
+  status_id VARCHAR(50) NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  color VARCHAR(20) DEFAULT '#3b82f6',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, status_id)
+);
+
+-- Criar índices para melhor performance
+CREATE INDEX IF NOT EXISTS idx_kanban_columns_user_id ON kanban_columns(user_id);
+CREATE INDEX IF NOT EXISTS idx_kanban_columns_position ON kanban_columns(user_id, position);
+
 -- ============================================
 -- VERIFICAÇÃO (opcional - para confirmar que funcionou)
 -- ============================================
