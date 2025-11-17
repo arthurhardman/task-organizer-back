@@ -218,20 +218,31 @@ router.post('/webhook', express.json(), async (req, res) => {
           const PREMIUM_PLAN_AMOUNT = 3990;
           const BASIC_PLAN_CREDITS = 50;
           
-          const isPremium = amount >= PREMIUM_PLAN_AMOUNT - 50; // Margem de erro de 50 centavos
-          const isBasic = amount >= BASIC_PLAN_AMOUNT - 50 && amount < PREMIUM_PLAN_AMOUNT - 50;
+          // Margem de erro de 100 centavos para cobrir possíveis variações (taxas, arredondamentos, etc)
+          const isPremium = amount >= (PREMIUM_PLAN_AMOUNT - 100);
+          const isBasic = amount >= (BASIC_PLAN_AMOUNT - 100) && amount < (PREMIUM_PLAN_AMOUNT - 100);
+          
+          console.log('🔍 Detecção de plano:', {
+            amount,
+            isPremium,
+            isBasic,
+            planType: isPremium ? 'PREMIUM' : isBasic ? 'BASIC' : 'UNKNOWN'
+          });
 
           // Atualizar usuário
           if (isPremium) {
             await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [targetUserId]);
-            console.log('✅ Usuário atualizado para premium:', targetUserId);
+            console.log('✅ Usuário atualizado para PREMIUM:', targetUserId, `(valor: R$ ${(amount / 100).toFixed(2)})`);
           } else if (isBasic) {
             // Plano básico: adicionar créditos mas não tornar premium
             const { getUserCredits } = await import('../utils/credits');
             const currentCredits = await getUserCredits(targetUserId);
             const newCredits = (currentCredits < 0 ? 0 : currentCredits) + BASIC_PLAN_CREDITS;
             await pool.query('UPDATE users SET credits = $1 WHERE id = $2', [newCredits, targetUserId]);
-            console.log(`✅ ${BASIC_PLAN_CREDITS} créditos adicionados ao usuário:`, targetUserId);
+            console.log(`✅ Plano BÁSICO aplicado: ${BASIC_PLAN_CREDITS} créditos adicionados ao usuário:`, targetUserId, `(valor: R$ ${(amount / 100).toFixed(2)})`);
+          } else {
+            console.warn('⚠️ Valor não reconhecido como plano válido:', amount, 'centavos (R$', (amount / 100).toFixed(2), ')');
+            console.warn('⚠️ Esperado: R$ 24,90 (Básico) ou R$ 39,90 (Premium)');
           }
 
           // Calcular data de expiração (1 mês a partir de agora para premium, null para básico)
