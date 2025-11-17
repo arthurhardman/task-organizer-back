@@ -211,9 +211,35 @@ router.post('/webhook', express.json(), async (req, res) => {
           
           console.log('Amount normalizado:', { rawAmount, amount, tipo: typeof rawAmount });
 
-          // Calcular data de expiração (1 mês a partir de agora)
-          const expiresAt = new Date();
-          expiresAt.setMonth(expiresAt.getMonth() + 1);
+          // Determinar tipo de plano baseado no valor
+          // Plano Básico: R$ 24,90 (2490 centavos)
+          // Plano Premium: R$ 39,90 (3990 centavos)
+          const BASIC_PLAN_AMOUNT = 2490;
+          const PREMIUM_PLAN_AMOUNT = 3990;
+          const BASIC_PLAN_CREDITS = 50;
+          
+          const isPremium = amount >= PREMIUM_PLAN_AMOUNT - 50; // Margem de erro de 50 centavos
+          const isBasic = amount >= BASIC_PLAN_AMOUNT - 50 && amount < PREMIUM_PLAN_AMOUNT - 50;
+
+          // Atualizar usuário
+          if (isPremium) {
+            await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [targetUserId]);
+            console.log('✅ Usuário atualizado para premium:', targetUserId);
+          } else if (isBasic) {
+            // Plano básico: adicionar créditos mas não tornar premium
+            const { getUserCredits } = await import('../utils/credits');
+            const currentCredits = await getUserCredits(targetUserId);
+            const newCredits = (currentCredits < 0 ? 0 : currentCredits) + BASIC_PLAN_CREDITS;
+            await pool.query('UPDATE users SET credits = $1 WHERE id = $2', [newCredits, targetUserId]);
+            console.log(`✅ ${BASIC_PLAN_CREDITS} créditos adicionados ao usuário:`, targetUserId);
+          }
+
+          // Calcular data de expiração (1 mês a partir de agora para premium, null para básico)
+          const expiresAt = isPremium ? (() => {
+            const date = new Date();
+            date.setMonth(date.getMonth() + 1);
+            return date;
+          })() : null;
 
           // Criar ou atualizar subscription
           await pool.query(

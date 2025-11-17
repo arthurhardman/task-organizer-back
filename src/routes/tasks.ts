@@ -39,7 +39,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
 // Create task
 router.post('/', authenticate, async (req: AuthRequest, res) => {
   try {
-    const { title, description, status, priority, due_date } = req.body;
+    const { title, description, status, priority, due_date, due_time } = req.body;
 
     if (!title) {
       return res.status(400).json({ error: 'Título é obrigatório' });
@@ -64,8 +64,8 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO tasks (user_id, title, description, status, priority, due_date)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO tasks (user_id, title, description, status, priority, due_date, due_time)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
         req.userId,
@@ -74,6 +74,7 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
         status || 'todo',
         priority || 'medium',
         due_date || null,
+        due_time || null,
       ]
     );
 
@@ -89,7 +90,7 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
 // Update task
 router.put('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
-    const { title, description, status, priority, due_date, position } = req.body;
+    const { title, description, status, priority, due_date, due_time, position } = req.body;
 
     // Verificar e consumir créditos (apenas se não for premium)
     const hasCredits = await hasEnoughCredits(req.userId!);
@@ -116,9 +117,10 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
            status = COALESCE($3, status),
            priority = COALESCE($4, priority),
            due_date = COALESCE($5, due_date),
-           position = COALESCE($6, position),
+           due_time = COALESCE($6, due_time),
+           position = COALESCE($7, position),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $7 AND user_id = $8
+       WHERE id = $8 AND user_id = $9
        RETURNING *`,
       [
         title,
@@ -126,6 +128,7 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
         status,
         priority,
         due_date,
+        due_time,
         position,
         req.params.id,
         req.userId,
