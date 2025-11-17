@@ -89,8 +89,7 @@ router.post('/webhook', express.json(), async (req, res) => {
         event, 
         checkoutId, 
         userId, 
-        customerEmail,
-        webhookData 
+        customerEmail
       });
 
       // Para pix.generated, apenas logar (aguardando pagamento)
@@ -152,97 +151,102 @@ router.post('/webhook', express.json(), async (req, res) => {
         }
 
         try {
-          // Atualizar usuário para premium
-          await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [targetUserId]);
-          console.log('✅ Usuário atualizado para premium:', targetUserId);
-
-          // Extrair amount do webhook (pode estar em vários lugares)
-          // Tentar múltiplos campos e formatos
-          const rawAmount = 
-            webhookData?.payment?.amount || 
-            webhookData?.payment?.value ||
-            webhookData?.amount || 
-            webhookData?.value ||
-            webhookData?.total ||
-            webhookData?.price ||
-            2990; // R$ 29,90 em centavos (fallback)
-          
-          // Converter para centavos (inteiro) - garantir que seja sempre um inteiro
-          let amount: number;
-          if (typeof rawAmount === 'number') {
-            // Se for menor que 1, pode ser um decimal estranho ou valor incorreto
-            if (rawAmount < 1) {
-              // Valor muito pequeno ou incorreto, usar fallback
-              console.warn('Valor muito pequeno recebido do webhook:', rawAmount, 'usando fallback');
-              amount = 2990;
-            } else if (rawAmount < 100) {
-              // Está em reais (ex: 29.90), converter para centavos
-              amount = Math.round(rawAmount * 100);
-            } else {
-              // Já está em centavos (ex: 2990)
-              amount = Math.round(rawAmount);
-            }
-          } else if (typeof rawAmount === 'string') {
-            // Se for string, tentar parsear
-            const parsed = parseFloat(rawAmount);
-            if (isNaN(parsed)) {
-              console.warn('Não foi possível parsear amount como número:', rawAmount, 'usando fallback');
-              amount = 2990; // Fallback
-            } else if (parsed < 1) {
-              console.warn('Valor muito pequeno parseado:', parsed, 'usando fallback');
-              amount = 2990;
-            } else if (parsed < 100) {
-              // Está em reais, converter para centavos
-              amount = Math.round(parsed * 100);
-            } else {
-              // Já está em centavos
-              amount = Math.round(parsed);
-            }
-          } else {
-            console.warn('Tipo de amount não reconhecido:', typeof rawAmount, rawAmount, 'usando fallback');
-            amount = 2990; // Fallback
+          // Log detalhado dos produtos para identificar o plano
+          console.log('📦 ===== LOGS DE PRODUTOS =====');
+          if (webhookData?.products && Array.isArray(webhookData.products)) {
+            console.log('📦 Array de produtos:', JSON.stringify(webhookData.products, null, 2));
+            webhookData.products.forEach((product: any, index: number) => {
+              console.log(`📦 Produto [${index}]:`, {
+                id: product?.id,
+                title: product?.title,
+                name: product?.name,
+                type: product?.type,
+                price: product?.price,
+                amount: product?.amount,
+                description: product?.description,
+                fullProduct: JSON.stringify(product, null, 2)
+              });
+            });
           }
-          
-          // Garantir que amount seja um inteiro válido
-          if (!Number.isInteger(amount) || amount <= 0) {
-            console.warn('Amount inválido após normalização:', amount, 'usando fallback');
-            amount = 2990;
+          if (webhookData?.product) {
+            console.log('📦 Objeto produto único:', {
+              id: webhookData.product?.id,
+              title: webhookData.product?.title,
+              name: webhookData.product?.name,
+              type: webhookData.product?.type,
+              price: webhookData.product?.price,
+              amount: webhookData.product?.amount,
+              description: webhookData.product?.description,
+              fullProduct: JSON.stringify(webhookData.product, null, 2)
+            });
           }
-          
-          console.log('Amount normalizado:', { rawAmount, amount, tipo: typeof rawAmount });
+          console.log('📦 ===== FIM DOS LOGS =====');
 
-          // Determinar tipo de plano baseado no valor
-          // Plano Básico: R$ 24,90 (2490 centavos)
-          // Plano Premium: R$ 39,90 (3990 centavos)
-          const BASIC_PLAN_AMOUNT = 2490;
-          const PREMIUM_PLAN_AMOUNT = 3990;
+          // Identificar o plano baseado no produto (título/nome)
           const BASIC_PLAN_CREDITS = 50;
+          let isPremium = false;
+          let isBasic = false;
+          let planName = 'UNKNOWN';
           
-          // Margem de erro de 100 centavos para cobrir possíveis variações (taxas, arredondamentos, etc)
-          const isPremium = amount >= (PREMIUM_PLAN_AMOUNT - 100);
-          const isBasic = amount >= (BASIC_PLAN_AMOUNT - 100) && amount < (PREMIUM_PLAN_AMOUNT - 100);
+          // Verificar produtos no array
+          if (webhookData?.products && Array.isArray(webhookData.products) && webhookData.products.length > 0) {
+            const product = webhookData.products[0];
+            const productTitle = (product?.title || product?.name || '').toLowerCase();
+            
+            console.log('🔍 Analisando produto do array:', productTitle);
+            
+            if (productTitle.includes('premium') || productTitle.includes('premium')) {
+              isPremium = true;
+              planName = 'PREMIUM';
+            } else if (productTitle.includes('básico') || productTitle.includes('basico') || productTitle.includes('básico')) {
+              isBasic = true;
+              planName = 'BASIC';
+            }
+          }
           
-          console.log('🔍 Detecção de plano:', {
-            amount,
+          // Verificar produto único
+          if (!isPremium && !isBasic && webhookData?.product) {
+            const productTitle = (webhookData.product?.title || webhookData.product?.name || '').toLowerCase();
+            
+            console.log('🔍 Analisando produto único:', productTitle);
+            
+            if (productTitle.includes('premium')) {
+              isPremium = true;
+              planName = 'PREMIUM';
+            } else if (productTitle.includes('básico') || productTitle.includes('basico')) {
+              isBasic = true;
+              planName = 'BASIC';
+            }
+          }
+          
+          console.log('🔍 Detecção de plano por produto:', {
             isPremium,
             isBasic,
-            planType: isPremium ? 'PREMIUM' : isBasic ? 'BASIC' : 'UNKNOWN'
+            planName,
+            email: customerEmail
           });
 
-          // Atualizar usuário
+          // Atualizar usuário baseado no plano identificado
           if (isPremium) {
             await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [targetUserId]);
-            console.log('✅ Usuário atualizado para PREMIUM:', targetUserId, `(valor: R$ ${(amount / 100).toFixed(2)})`);
+            console.log('✅ Usuário atualizado para PREMIUM:', targetUserId, `(email: ${customerEmail})`);
           } else if (isBasic) {
             // Plano básico: adicionar créditos mas não tornar premium
             const { getUserCredits } = await import('../utils/credits');
             const currentCredits = await getUserCredits(targetUserId);
             const newCredits = (currentCredits < 0 ? 0 : currentCredits) + BASIC_PLAN_CREDITS;
             await pool.query('UPDATE users SET credits = $1 WHERE id = $2', [newCredits, targetUserId]);
-            console.log(`✅ Plano BÁSICO aplicado: ${BASIC_PLAN_CREDITS} créditos adicionados ao usuário:`, targetUserId, `(valor: R$ ${(amount / 100).toFixed(2)})`);
+            console.log(`✅ Plano BÁSICO aplicado: ${BASIC_PLAN_CREDITS} créditos adicionados ao usuário:`, targetUserId, `(email: ${customerEmail})`);
           } else {
-            console.warn('⚠️ Valor não reconhecido como plano válido:', amount, 'centavos (R$', (amount / 100).toFixed(2), ')');
-            console.warn('⚠️ Esperado: R$ 24,90 (Básico) ou R$ 39,90 (Premium)');
+            console.warn('⚠️ Plano não identificado pelos produtos. Verifique os logs acima.');
+            console.warn('⚠️ Esperado: produto com "Premium" ou "Básico/Basico" no título/nome');
+            // Não fazer nada se não conseguir identificar
+            return res.json({ 
+              received: true, 
+              event,
+              warning: 'Plano não identificado - verificar logs',
+              receivedData: { checkoutId, customerEmail }
+            });
           }
 
           // Calcular data de expiração (1 mês a partir de agora para premium, null para básico)
@@ -251,6 +255,12 @@ router.post('/webhook', express.json(), async (req, res) => {
             date.setMonth(date.getMonth() + 1);
             return date;
           })() : null;
+
+          // Extrair amount para salvar na subscription (opcional, apenas para registro)
+          const amount = webhookData?.payment?.amount || 
+                        webhookData?.products?.[0]?.price || 
+                        webhookData?.product?.price || 
+                        0;
 
           // Criar ou atualizar subscription
           await pool.query(
@@ -261,7 +271,7 @@ router.post('/webhook', express.json(), async (req, res) => {
             [
               targetUserId,
               checkoutId,
-              amount,
+              amount || 0,
               webhookData?.installments || 1,
               expiresAt,
             ]
