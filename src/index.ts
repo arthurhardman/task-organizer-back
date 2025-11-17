@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { authRoutes } from './routes/auth';
 import { taskRoutes } from './routes/tasks';
 import { paymentRoutes } from './routes/payments';
+import { reportRoutes } from './routes/reports';
 import { errorHandler } from './middleware/errorHandler';
 import { initDatabase } from './db';
 
@@ -26,6 +27,7 @@ initDatabase().catch(console.error);
 app.use('/api/auth', authRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/reports', reportRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Task Organizer API is running' });
