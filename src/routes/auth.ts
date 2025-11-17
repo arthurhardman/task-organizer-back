@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool } from '../db';
 import { authenticate } from '../middleware/auth';
+import { updateUserPremiumStatus } from '../utils/subscription';
 
 const router = express.Router();
 
@@ -64,6 +65,9 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Credenciais inválidas' });
     }
 
+    // Verificar e atualizar status premium baseado na assinatura
+    const isPremium = await updateUserPremiumStatus(user.id);
+
     const secret = process.env.JWT_SECRET || 'default-secret-change-in-production';
     const token = jwt.sign(
       { userId: user.id },
@@ -76,7 +80,7 @@ router.post('/login', async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.name,
-        isPremium: user.is_premium,
+        isPremium: isPremium,
         language: user.language,
       },
       token,
@@ -90,8 +94,12 @@ router.post('/login', async (req, res) => {
 router.get('/me', authenticate, async (req, res) => {
   try {
     const authReq = req as any;
+    
+    // Verificar e atualizar status premium
+    const isPremium = await updateUserPremiumStatus(authReq.userId);
+    
     const result = await pool.query(
-      'SELECT id, email, name, is_premium, language FROM users WHERE id = $1',
+      'SELECT id, email, name, language FROM users WHERE id = $1',
       [authReq.userId]
     );
 
@@ -103,7 +111,7 @@ router.get('/me', authenticate, async (req, res) => {
       id: result.rows[0].id,
       email: result.rows[0].email,
       name: result.rows[0].name,
-      isPremium: result.rows[0].is_premium,
+      isPremium: isPremium,
       language: result.rows[0].language,
     });
   } catch (error) {

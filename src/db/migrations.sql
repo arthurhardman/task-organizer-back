@@ -34,9 +34,13 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   amount INTEGER NOT NULL,
   currency VARCHAR(10) DEFAULT 'BRL',
   installments INTEGER DEFAULT 1,
+  expires_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Adicionar coluna expires_at se a tabela já existir
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;
 
 CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);

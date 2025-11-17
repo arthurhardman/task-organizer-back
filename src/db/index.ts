@@ -44,6 +44,7 @@ export const initDatabase = async () => {
         amount INTEGER NOT NULL,
         currency VARCHAR(10) DEFAULT 'BRL',
         installments INTEGER DEFAULT 1,
+        expires_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );

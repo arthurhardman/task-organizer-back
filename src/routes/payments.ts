@@ -61,11 +61,14 @@ router.post('/webhook', express.json(), async (req, res) => {
 
     if (paymentEvents.includes(event)) {
       // Extrair informações de diferentes formatos possíveis
+      // O GGCheckout usa payment.id como identificador do pagamento
       const checkoutId = 
+        webhookData?.payment?.id || // ID do pagamento (formato GGCheckout)
         webhookData?.checkout_id || 
         webhookData?.id || 
         webhookData?.checkoutId ||
         webhookData?.transaction_id ||
+        webhookData?.webhook?.id || // ID do webhook
         rest?.checkout_id ||
         rest?.id;
 
@@ -153,17 +156,29 @@ router.post('/webhook', express.json(), async (req, res) => {
           await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [targetUserId]);
           console.log('✅ Usuário atualizado para premium:', targetUserId);
 
+          // Extrair amount do webhook (pode estar em payment.amount ou amount direto)
+          const amount = 
+            webhookData?.payment?.amount || 
+            webhookData?.amount || 
+            webhookData?.value || 
+            2500; // R$ 25,00 em centavos (fallback)
+
+          // Calcular data de expiração (1 mês a partir de agora)
+          const expiresAt = new Date();
+          expiresAt.setMonth(expiresAt.getMonth() + 1);
+
           // Criar ou atualizar subscription
           await pool.query(
-            `INSERT INTO subscriptions (user_id, ggcheckout_checkout_id, status, amount, installments, created_at, updated_at)
-             VALUES ($1, $2, 'active', $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `INSERT INTO subscriptions (user_id, ggcheckout_checkout_id, status, amount, installments, expires_at, created_at, updated_at)
+             VALUES ($1, $2, 'active', $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
              ON CONFLICT (ggcheckout_checkout_id) 
-             DO UPDATE SET status = 'active', updated_at = CURRENT_TIMESTAMP`,
+             DO UPDATE SET status = 'active', expires_at = $5, updated_at = CURRENT_TIMESTAMP`,
             [
               targetUserId,
               checkoutId,
-              webhookData?.amount || webhookData?.value || 2500, // R$ 25,00 em centavos
+              amount,
               webhookData?.installments || 1,
+              expiresAt,
             ]
           );
           console.log('✅ Subscription atualizada:', checkoutId);
@@ -202,15 +217,19 @@ router.get('/verify/:checkoutId', authenticate, async (req: AuthRequest, res) =>
     const status = response.data.status;
 
     if (status === 'completed' || status === 'approved') {
+      // Calcular data de expiração (1 mês a partir de agora)
+      const expiresAt = new Date();
+      expiresAt.setMonth(expiresAt.getMonth() + 1);
+
       // Atualizar usuário para premium
       await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [req.userId]);
 
-      // Atualizar subscription
+      // Atualizar subscription com expires_at
       await pool.query(
         `UPDATE subscriptions 
-         SET status = 'active', updated_at = CURRENT_TIMESTAMP
+         SET status = 'active', expires_at = $3, updated_at = CURRENT_TIMESTAMP
          WHERE ggcheckout_checkout_id = $1 AND user_id = $2`,
-        [checkoutId, req.userId]
+        [checkoutId, req.userId, expiresAt]
       );
     }
 
@@ -227,27 +246,87 @@ router.get('/verify/:checkoutId', authenticate, async (req: AuthRequest, res) =>
 // Get subscription status
 router.get('/status', authenticate, async (req: AuthRequest, res) => {
   try {
+    const { updateUserPremiumStatus } = await import('../utils/subscription');
+    
+    // Verificar e atualizar status premium
+    const isPremium = await updateUserPremiumStatus(req.userId!);
+    
     const result = await pool.query(
-      `SELECT s.*, u.is_premium
+      `SELECT s.*
        FROM subscriptions s
-       JOIN users u ON s.user_id = u.id
        WHERE s.user_id = $1
        ORDER BY s.created_at DESC
        LIMIT 1`,
       [req.userId]
     );
 
-    const userResult = await pool.query(
-      'SELECT is_premium FROM users WHERE id = $1',
-      [req.userId]
-    );
+    const subscription = result.rows[0] || null;
+    
+    // Verificar se está expirada
+    let isExpired = false;
+    let daysUntilExpiry = null;
+    
+    if (subscription?.expires_at) {
+      const expiresAt = new Date(subscription.expires_at);
+      const now = new Date();
+      isExpired = expiresAt <= now;
+      
+      if (!isExpired) {
+        const diffTime = expiresAt.getTime() - now.getTime();
+        daysUntilExpiry = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      }
+    }
 
     res.json({
-      isPremium: userResult.rows[0]?.is_premium || false,
-      subscription: result.rows[0] || null,
+      isPremium,
+      subscription: subscription ? {
+        ...subscription,
+        isExpired,
+        daysUntilExpiry,
+      } : null,
     });
   } catch (error) {
     res.status(500).json({ error: 'Erro ao buscar status' });
+  }
+});
+
+// Get payment history
+router.get('/history', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT 
+        id,
+        ggcheckout_checkout_id,
+        status,
+        amount,
+        currency,
+        installments,
+        expires_at,
+        created_at,
+        updated_at
+       FROM subscriptions
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [req.userId]
+    );
+
+    const history = result.rows.map((row) => ({
+      id: row.id,
+      checkoutId: row.ggcheckout_checkout_id,
+      status: row.status,
+      amount: row.amount,
+      currency: row.currency,
+      installments: row.installments,
+      expiresAt: row.expires_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      isExpired: row.expires_at ? new Date(row.expires_at) <= new Date() : false,
+    }));
+
+    res.json({ history });
+  } catch (error) {
+    console.error('Error fetching payment history:', error);
+    res.status(500).json({ error: 'Erro ao buscar histórico' });
   }
 });
 
