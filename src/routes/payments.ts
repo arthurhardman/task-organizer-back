@@ -182,44 +182,49 @@ router.post('/webhook', express.json(), async (req, res) => {
           }
           console.log('📦 ===== FIM DOS LOGS =====');
 
-          // Identificar o plano baseado no produto (título/nome)
+          // Identificar o plano baseado no ID do produto
           const BASIC_PLAN_CREDITS = 50;
+          const BASIC_PRODUCT_ID = 'XMMYz9QVFTWABp3Jl3pQ';
+          const PREMIUM_PRODUCT_ID = '3YmbtSMTrFkHujcQN8h8';
+          
           let isPremium = false;
           let isBasic = false;
           let planName = 'UNKNOWN';
+          let productId = null;
           
           // Verificar produtos no array
           if (webhookData?.products && Array.isArray(webhookData.products) && webhookData.products.length > 0) {
             const product = webhookData.products[0];
-            const productTitle = (product?.title || product?.name || '').toLowerCase();
+            productId = product?.id;
             
-            console.log('🔍 Analisando produto do array:', productTitle);
+            console.log('🔍 Analisando produto do array - ID:', productId);
             
-            if (productTitle.includes('premium') || productTitle.includes('premium')) {
+            if (productId === PREMIUM_PRODUCT_ID) {
               isPremium = true;
               planName = 'PREMIUM';
-            } else if (productTitle.includes('básico') || productTitle.includes('basico') || productTitle.includes('básico')) {
+            } else if (productId === BASIC_PRODUCT_ID) {
               isBasic = true;
               planName = 'BASIC';
             }
           }
           
-          // Verificar produto único
+          // Verificar produto único (fallback)
           if (!isPremium && !isBasic && webhookData?.product) {
-            const productTitle = (webhookData.product?.title || webhookData.product?.name || '').toLowerCase();
+            productId = webhookData.product?.id;
             
-            console.log('🔍 Analisando produto único:', productTitle);
+            console.log('🔍 Analisando produto único - ID:', productId);
             
-            if (productTitle.includes('premium')) {
+            if (productId === PREMIUM_PRODUCT_ID) {
               isPremium = true;
               planName = 'PREMIUM';
-            } else if (productTitle.includes('básico') || productTitle.includes('basico')) {
+            } else if (productId === BASIC_PRODUCT_ID) {
               isBasic = true;
               planName = 'BASIC';
             }
           }
           
-          console.log('🔍 Detecção de plano por produto:', {
+          console.log('🔍 Detecção de plano por ID do produto:', {
+            productId,
             isPremium,
             isBasic,
             planName,
@@ -238,14 +243,17 @@ router.post('/webhook', express.json(), async (req, res) => {
             await pool.query('UPDATE users SET credits = $1 WHERE id = $2', [newCredits, targetUserId]);
             console.log(`✅ Plano BÁSICO aplicado: ${BASIC_PLAN_CREDITS} créditos adicionados ao usuário:`, targetUserId, `(email: ${customerEmail})`);
           } else {
-            console.warn('⚠️ Plano não identificado pelos produtos. Verifique os logs acima.');
-            console.warn('⚠️ Esperado: produto com "Premium" ou "Básico/Basico" no título/nome');
+            console.warn('⚠️ Plano não identificado pelo ID do produto. Verifique os logs acima.');
+            console.warn('⚠️ ID do produto recebido:', productId);
+            console.warn('⚠️ IDs esperados:');
+            console.warn('   - Básico:', BASIC_PRODUCT_ID);
+            console.warn('   - Premium:', PREMIUM_PRODUCT_ID);
             // Não fazer nada se não conseguir identificar
             return res.json({ 
               received: true, 
               event,
               warning: 'Plano não identificado - verificar logs',
-              receivedData: { checkoutId, customerEmail }
+              receivedData: { checkoutId, customerEmail, productId }
             });
           }
 
