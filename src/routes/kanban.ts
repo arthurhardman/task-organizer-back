@@ -206,14 +206,39 @@ router.put('/columns/reorder', authenticate, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Colunas devem ser um array' });
     }
 
+    // Validar e normalizar os dados antes de processar
+    const validatedColumns: Array<{ id: number; position: number }> = [];
+    
+    for (const column of columns) {
+      // Validar que id e position existem
+      if (column.id === undefined || column.id === null || column.position === undefined || column.position === null) {
+        return res.status(400).json({ 
+          error: `Coluna inválida: id=${column.id}, position=${column.position}. Todos os campos são obrigatórios.` 
+        });
+      }
+      
+      // Converter para números
+      const idNum = typeof column.id === 'string' ? parseInt(column.id, 10) : Number(column.id);
+      const positionNum = typeof column.position === 'string' ? parseInt(column.position, 10) : Number(column.position);
+      
+      // Validar que são números válidos
+      if (isNaN(idNum) || isNaN(positionNum) || idNum <= 0 || positionNum < 0) {
+        return res.status(400).json({ 
+          error: `Valores inválidos: id=${column.id} (${idNum}), position=${column.position} (${positionNum})` 
+        });
+      }
+      
+      validatedColumns.push({ id: idNum, position: positionNum });
+    }
+
     // Validar que todos os IDs pertencem ao usuário
-    const columnIds = columns.map((col: any) => col.id);
+    const columnIds = validatedColumns.map(col => col.id);
     const checkResult = await client.query(
       'SELECT id FROM kanban_columns WHERE id = ANY($1) AND user_id = $2',
       [columnIds, req.userId]
     );
 
-    if (checkResult.rows.length !== columns.length) {
+    if (checkResult.rows.length !== validatedColumns.length) {
       return res.status(403).json({ error: 'Algumas colunas não pertencem ao usuário' });
     }
 
@@ -221,18 +246,10 @@ router.put('/columns/reorder', authenticate, async (req: AuthRequest, res) => {
     await client.query('BEGIN');
 
     try {
-      for (const column of columns) {
-        // Validar que position e id são números válidos
-        const positionNum = typeof column.position === 'string' ? parseInt(column.position, 10) : Number(column.position);
-        const idNum = typeof column.id === 'string' ? parseInt(column.id, 10) : Number(column.id);
-        
-        if (isNaN(positionNum) || isNaN(idNum)) {
-          throw new Error(`Valores inválidos: position=${column.position}, id=${column.id}`);
-        }
-        
+      for (const column of validatedColumns) {
         await client.query(
           'UPDATE kanban_columns SET position = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND user_id = $3',
-          [positionNum, idNum, req.userId]
+          [column.position, column.id, req.userId]
         );
       }
 
