@@ -191,6 +191,7 @@ router.delete('/columns/:id', authenticate, async (req: AuthRequest, res) => {
 
 // Reorder columns (update positions)
 router.put('/columns/reorder', authenticate, async (req: AuthRequest, res) => {
+  const client = await pool.connect();
   try {
     const { columns } = req.body; // Array de { id, position }
 
@@ -198,26 +199,39 @@ router.put('/columns/reorder', authenticate, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Colunas devem ser um array' });
     }
 
+    // Validar que todos os IDs pertencem ao usuário
+    const columnIds = columns.map((col: any) => col.id);
+    const checkResult = await client.query(
+      'SELECT id FROM kanban_columns WHERE id = ANY($1) AND user_id = $2',
+      [columnIds, req.userId]
+    );
+
+    if (checkResult.rows.length !== columns.length) {
+      return res.status(403).json({ error: 'Algumas colunas não pertencem ao usuário' });
+    }
+
     // Atualizar posições em uma transação
-    await pool.query('BEGIN');
+    await client.query('BEGIN');
 
     try {
       for (const column of columns) {
-        await pool.query(
+        await client.query(
           'UPDATE kanban_columns SET position = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND user_id = $3',
           [column.position, column.id, req.userId]
         );
       }
 
-      await pool.query('COMMIT');
+      await client.query('COMMIT');
       res.json({ message: 'Ordem das colunas atualizada com sucesso' });
     } catch (error) {
-      await pool.query('ROLLBACK');
+      await client.query('ROLLBACK');
       throw error;
     }
   } catch (error) {
     console.error('Error reordering kanban columns:', error);
     res.status(500).json({ error: 'Erro ao reordenar colunas do Kanban' });
+  } finally {
+    client.release();
   }
 });
 
