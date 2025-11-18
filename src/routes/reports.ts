@@ -63,16 +63,17 @@ router.get('/monthly', authenticate, requirePremium, async (req: AuthRequest, re
 
     // Estatísticas gerais
     const totalTasks = tasks.length;
-    // Considerar "done" como concluída (ou o último status se não houver "done")
-    const doneStatusId = columns.find(c => c.status_id === 'done')?.status_id || columns[columns.length - 1]?.status_id;
-    const completedTasks = tasks.filter(t => t.status === doneStatusId).length;
-    const pendingTasks = tasks.filter(t => t.status !== doneStatusId).length;
+    // Considerar apenas DONE como concluída
+    const completedTasks = tasks.filter(t => t.status.toUpperCase() === 'DONE').length;
+    const pendingTasks = tasks.filter(t => t.status.toUpperCase() !== 'DONE').length;
     const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-    // Estatísticas por status (dinâmico baseado nas colunas do usuário)
+    // Estatísticas por status (agrupar por status único, não por coluna)
     const statusStats: { [key: string]: number } = {};
-    columns.forEach(column => {
-      statusStats[column.status_id] = tasks.filter(t => t.status === column.status_id).length;
+    // Obter status únicos das colunas
+    const uniqueStatuses = [...new Set(columns.map(c => c.status_id.toUpperCase()))];
+    uniqueStatuses.forEach(statusId => {
+      statusStats[statusId] = tasks.filter(t => t.status.toUpperCase() === statusId).length;
     });
 
     // Estatísticas por prioridade
@@ -89,10 +90,10 @@ router.get('/monthly', authenticate, requirePremium, async (req: AuthRequest, re
       tasksByDay[day] = (tasksByDay[day] || 0) + 1;
     });
 
-    // Tarefas concluídas por dia do mês (usando o status de "concluída" do usuário)
+    // Tarefas concluídas por dia do mês (apenas status DONE)
     const completedByDay: { [key: number]: number } = {};
     tasks
-      .filter(t => t.status === doneStatusId)
+      .filter(t => t.status.toUpperCase() === 'DONE')
       .forEach(task => {
         const day = new Date(task.updated_at).getDate();
         completedByDay[day] = (completedByDay[day] || 0) + 1;
@@ -102,7 +103,7 @@ router.get('/monthly', authenticate, requirePremium, async (req: AuthRequest, re
     const tasksWithDueDate = tasks.filter(t => t.due_date);
     const overdueTasks = tasksWithDueDate.filter(t => {
       const dueDate = new Date(t.due_date);
-      return dueDate < new Date() && t.status !== doneStatusId;
+      return dueDate < new Date() && t.status.toUpperCase() !== 'DONE';
     }).length;
 
     // Média de tarefas por dia
@@ -138,11 +139,15 @@ router.get('/monthly', authenticate, requirePremium, async (req: AuthRequest, re
         avgTasksPerDay: parseFloat(avgTasksPerDay),
       },
       statusStats,
-      statusColumns: columns.map(c => ({
-        status_id: c.status_id,
-        name: c.name,
-        color: c.color,
-      })),
+      statusColumns: uniqueStatuses.map(statusId => {
+        // Pegar a primeira coluna com esse status para nome e cor
+        const firstColumn = columns.find(c => c.status_id.toUpperCase() === statusId);
+        return {
+          status_id: statusId,
+          name: firstColumn?.name || statusId,
+          color: firstColumn?.color || '#3b82f6',
+        };
+      }),
       priorityStats,
       tasksByDay,
       completedByDay,

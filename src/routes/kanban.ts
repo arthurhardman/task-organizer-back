@@ -106,15 +106,7 @@ router.post('/columns', authenticate, async (req: AuthRequest, res) => {
       });
     }
 
-    // Verificar se já existe uma coluna com esse status_id para o usuário
-    const existing = await pool.query(
-      'SELECT id FROM kanban_columns WHERE user_id = $1 AND status_id = $2',
-      [req.userId, upperStatusId]
-    );
-
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ error: 'Já existe uma coluna com esse status' });
-    }
+    // Permitir múltiplas colunas com o mesmo status - removida validação de duplicata
 
     // Usar configuração padrão se não fornecida
     const statusConfig = STATUS_CONFIG[upperStatusId as KanbanStatus];

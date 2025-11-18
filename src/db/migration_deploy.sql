@@ -51,9 +51,22 @@ CREATE TABLE IF NOT EXISTS kanban_columns (
   position INTEGER NOT NULL DEFAULT 0,
   color VARCHAR(20) DEFAULT '#3b82f6',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(user_id, status_id)
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  -- Removida constraint UNIQUE(user_id, status_id) para permitir múltiplas colunas com o mesmo status
 );
+
+-- Remover constraint UNIQUE se existir (para bancos já criados)
+DO $$ 
+BEGIN
+  IF EXISTS (
+    SELECT 1 
+    FROM pg_constraint 
+    WHERE conname = 'kanban_columns_user_id_status_id_key'
+  ) THEN
+    ALTER TABLE kanban_columns 
+    DROP CONSTRAINT kanban_columns_user_id_status_id_key;
+  END IF;
+END $$;
 
 -- Criar índices para melhor performance
 CREATE INDEX IF NOT EXISTS idx_kanban_columns_user_id ON kanban_columns(user_id);
