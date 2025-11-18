@@ -25,17 +25,41 @@ const requireAdmin = async (req: AuthRequest, res: express.Response, next: expre
 };
 
 // Get all users in the business (admin only)
-router.get('/users', authenticate, requireBusinessAccess, requireAdmin, async (req: AuthRequest, res) => {
+// Se admin não for business, retorna todos os usuários do sistema
+router.get('/users', authenticate, requireAdmin, async (req: AuthRequest, res) => {
   try {
-    if (!req.businessId) {
-      const userResult = await pool.query(
-        'SELECT business_id FROM users WHERE id = $1',
-        [req.userId]
-      );
-      req.businessId = userResult.rows[0]?.business_id;
+    // Verificar se é admin e se tem business
+    const userResult = await pool.query(
+      'SELECT is_business, business_id FROM users WHERE id = $1',
+      [req.userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
     }
 
-    if (!req.businessId) {
+    const currentUser = userResult.rows[0];
+    const isBusiness = currentUser.is_business || false;
+    const businessId = currentUser.business_id;
+
+    // Se for admin mas não for business, retornar todos os usuários do sistema
+    if (!isBusiness) {
+      const result = await pool.query(
+        `SELECT u.id, u.name, u.email, u.is_admin, u.is_business, u.created_at, u.business_id,
+                b.name as business_name,
+                COUNT(DISTINCT tm.team_id) as team_count
+         FROM users u
+         LEFT JOIN businesses b ON b.id = u.business_id
+         LEFT JOIN team_members tm ON tm.user_id = u.id
+         GROUP BY u.id, b.name
+         ORDER BY u.created_at ASC`
+      );
+
+      return res.json(result.rows);
+    }
+
+    // Se for admin com business, retornar apenas usuários da empresa
+    if (!businessId) {
       return res.status(404).json({ error: 'Usuário não está associado a uma empresa' });
     }
 
@@ -47,35 +71,69 @@ router.get('/users', authenticate, requireBusinessAccess, requireAdmin, async (r
        WHERE u.business_id = $1
        GROUP BY u.id
        ORDER BY u.created_at ASC`,
-      [req.businessId]
+      [businessId]
     );
 
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching business users:', error);
-    res.status(500).json({ error: 'Erro ao buscar usuários da empresa' });
+    res.status(500).json({ error: 'Erro ao buscar usuários' });
   }
 });
 
 // Get business info with user count
-router.get('/info', authenticate, requireBusinessAccess, async (req: AuthRequest, res) => {
+// Se admin não for business, retorna informações gerais do sistema
+router.get('/info', authenticate, async (req: AuthRequest, res) => {
   try {
-    if (!req.businessId) {
-      const userResult = await pool.query(
-        'SELECT business_id FROM users WHERE id = $1',
-        [req.userId]
-      );
-      req.businessId = userResult.rows[0]?.business_id;
+    // Verificar se é admin e se tem business
+    const userResult = await pool.query(
+      'SELECT is_admin, is_business, business_id FROM users WHERE id = $1',
+      [req.userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
     }
 
-    if (!req.businessId) {
+    const currentUser = userResult.rows[0];
+    
+    // Se for admin mas não for business, retornar informações gerais do sistema
+    if (!currentUser.is_business) {
+      // Contar todos os usuários do sistema
+      const totalUsersResult = await pool.query('SELECT COUNT(*) FROM users');
+      const totalUsers = parseInt(totalUsersResult.rows[0].count);
+
+      // Contar empresas
+      const totalBusinessesResult = await pool.query('SELECT COUNT(*) FROM businesses');
+      const totalBusinesses = parseInt(totalBusinessesResult.rows[0].count);
+
+      return res.json({
+        id: null,
+        name: 'Sistema',
+        domain: 'sistema',
+        max_users: null,
+        extra_users_count: null,
+        currentUserCount: totalUsers,
+        totalAllowed: null,
+        usersOverLimit: 0,
+        extraUsersNeeded: 0,
+        extraUsersCost: 0,
+        canAddMore: true,
+        isSystemAdmin: true,
+        totalBusinesses,
+      });
+    }
+
+    // Se for admin com business, retornar informações da empresa
+    const businessId = currentUser.business_id;
+    if (!businessId) {
       return res.status(404).json({ error: 'Usuário não está associado a uma empresa' });
     }
 
     // Buscar informações do business
     const businessResult = await pool.query(
       'SELECT id, name, domain, max_users, extra_users_count, created_at FROM businesses WHERE id = $1',
-      [req.businessId]
+      [businessId]
     );
 
     if (businessResult.rows.length === 0) {
@@ -87,7 +145,7 @@ router.get('/info', authenticate, requireBusinessAccess, async (req: AuthRequest
     // Contar usuários atuais
     const userCountResult = await pool.query(
       'SELECT COUNT(*) FROM users WHERE business_id = $1',
-      [req.businessId]
+      [businessId]
     );
     const currentUserCount = parseInt(userCountResult.rows[0].count);
 
@@ -107,10 +165,11 @@ router.get('/info', authenticate, requireBusinessAccess, async (req: AuthRequest
       extraUsersNeeded,
       extraUsersCost,
       canAddMore: currentUserCount < totalAllowed,
+      isSystemAdmin: false,
     });
   } catch (error) {
     console.error('Error fetching business info:', error);
-    res.status(500).json({ error: 'Erro ao buscar informações da empresa' });
+    res.status(500).json({ error: 'Erro ao buscar informações' });
   }
 });
 
