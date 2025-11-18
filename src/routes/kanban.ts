@@ -118,8 +118,13 @@ router.put('/columns/:id', authenticate, async (req: AuthRequest, res) => {
       values.push(name);
     }
     if (position !== undefined) {
+      // Validar que position é um número válido
+      const positionNum = typeof position === 'string' ? parseInt(position, 10) : Number(position);
+      if (isNaN(positionNum)) {
+        return res.status(400).json({ error: 'Position deve ser um número válido' });
+      }
       updates.push(`position = $${paramIndex++}`);
-      values.push(position);
+      values.push(positionNum);
     }
     if (color !== undefined) {
       updates.push(`color = $${paramIndex++}`);
@@ -215,9 +220,17 @@ router.put('/columns/reorder', authenticate, async (req: AuthRequest, res) => {
 
     try {
       for (const column of columns) {
+        // Validar que position e id são números válidos
+        const positionNum = typeof column.position === 'string' ? parseInt(column.position, 10) : Number(column.position);
+        const idNum = typeof column.id === 'string' ? parseInt(column.id, 10) : Number(column.id);
+        
+        if (isNaN(positionNum) || isNaN(idNum)) {
+          throw new Error(`Valores inválidos: position=${column.position}, id=${column.id}`);
+        }
+        
         await client.query(
           'UPDATE kanban_columns SET position = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND user_id = $3',
-          [column.position, column.id, req.userId]
+          [positionNum, idNum, req.userId]
         );
       }
 
