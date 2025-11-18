@@ -4,11 +4,35 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 
 const router = express.Router();
 
+// Status permitidos para colunas do Kanban
+export const ALLOWED_KANBAN_STATUSES = [
+  'TODO',
+  'IN_PROGRESS',
+  'BLOCKED',
+  'WAITING_TEST',
+  'TESTING',
+  'WAITING_DEPLOY',
+  'DONE',
+] as const;
+
+export type KanbanStatus = typeof ALLOWED_KANBAN_STATUSES[number];
+
+// Mapeamento de status para nomes e cores padrão
+const STATUS_CONFIG: Record<KanbanStatus, { name: string; color: string }> = {
+  TODO: { name: 'A Fazer', color: '#3b82f6' },
+  IN_PROGRESS: { name: 'Em Progresso', color: '#eab308' },
+  BLOCKED: { name: 'Bloqueada', color: '#ef4444' },
+  WAITING_TEST: { name: 'Aguardando Teste', color: '#8b5cf6' },
+  TESTING: { name: 'Em Teste', color: '#06b6d4' },
+  WAITING_DEPLOY: { name: 'Aguardando Deploy', color: '#f59e0b' },
+  DONE: { name: 'Concluída', color: '#22c55e' },
+};
+
 // Colunas padrão do Kanban
 const DEFAULT_COLUMNS = [
-  { name: 'A Fazer', status_id: 'todo', position: 0, color: '#3b82f6' },
-  { name: 'Em Progresso', status_id: 'inProgress', position: 1, color: '#eab308' },
-  { name: 'Concluída', status_id: 'done', position: 2, color: '#22c55e' },
+  { name: STATUS_CONFIG.TODO.name, status_id: 'TODO', position: 0, color: STATUS_CONFIG.TODO.color },
+  { name: STATUS_CONFIG.IN_PROGRESS.name, status_id: 'IN_PROGRESS', position: 1, color: STATUS_CONFIG.IN_PROGRESS.color },
+  { name: STATUS_CONFIG.DONE.name, status_id: 'DONE', position: 2, color: STATUS_CONFIG.DONE.color },
 ];
 
 // Inicializar colunas padrão para um usuário
@@ -35,6 +59,17 @@ async function initializeDefaultColumns(userId: number) {
     console.error('Error initializing default columns:', error);
   }
 }
+
+// Rota para obter status permitidos
+router.get('/columns/allowed-statuses', authenticate, (req: AuthRequest, res) => {
+  res.json({
+    statuses: ALLOWED_KANBAN_STATUSES.map(status => ({
+      id: status,
+      name: STATUS_CONFIG[status].name,
+      color: STATUS_CONFIG[status].color,
+    })),
+  });
+});
 
 // Get all columns for the authenticated user
 router.get('/columns', authenticate, async (req: AuthRequest, res) => {
@@ -63,15 +98,28 @@ router.post('/columns', authenticate, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Nome e status_id são obrigatórios' });
     }
 
+    // Validar que o status_id é permitido
+    const upperStatusId = String(status_id).toUpperCase();
+    if (!ALLOWED_KANBAN_STATUSES.includes(upperStatusId as KanbanStatus)) {
+      return res.status(400).json({ 
+        error: `Status inválido. Status permitidos: ${ALLOWED_KANBAN_STATUSES.join(', ')}` 
+      });
+    }
+
     // Verificar se já existe uma coluna com esse status_id para o usuário
     const existing = await pool.query(
       'SELECT id FROM kanban_columns WHERE user_id = $1 AND status_id = $2',
-      [req.userId, status_id]
+      [req.userId, upperStatusId]
     );
 
     if (existing.rows.length > 0) {
-      return res.status(400).json({ error: 'Já existe uma coluna com esse status_id' });
+      return res.status(400).json({ error: 'Já existe uma coluna com esse status' });
     }
+
+    // Usar configuração padrão se não fornecida
+    const statusConfig = STATUS_CONFIG[upperStatusId as KanbanStatus];
+    const finalName = name || statusConfig.name;
+    const finalColor = color || statusConfig.color;
 
     const result = await pool.query(
       `INSERT INTO kanban_columns (user_id, name, status_id, position, color)
@@ -79,10 +127,10 @@ router.post('/columns', authenticate, async (req: AuthRequest, res) => {
        RETURNING *`,
       [
         req.userId,
-        name,
-        status_id,
+        finalName,
+        upperStatusId,
         position ?? 0,
-        color || '#3b82f6',
+        finalColor,
       ]
     );
 
