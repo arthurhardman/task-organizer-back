@@ -12,7 +12,7 @@ export const requirePremium = async (req: AuthRequest, res: Response, next: Next
     }
 
     const result = await pool.query(
-      'SELECT is_premium FROM users WHERE id = $1',
+      'SELECT is_premium, is_business FROM users WHERE id = $1',
       [req.userId]
     );
 
@@ -20,7 +20,11 @@ export const requirePremium = async (req: AuthRequest, res: Response, next: Next
       return res.status(404).json({ error: 'Usuário não encontrado' });
     }
 
-    if (!result.rows[0].is_premium) {
+    const user = result.rows[0];
+    // Usuários business também são premium automaticamente
+    const isPremium = user.is_premium || user.is_business;
+
+    if (!isPremium) {
       return res.status(403).json({ 
         error: 'Recurso exclusivo para usuários Premium',
         message: 'Faça upgrade para Premium para acessar este recurso'

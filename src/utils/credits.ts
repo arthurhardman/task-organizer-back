@@ -73,7 +73,7 @@ export async function hasEnoughCredits(userId: number, required: number = CREDIT
     }
     
     const result = await pool.query(
-      'SELECT credits, is_premium FROM users WHERE id = $1',
+      'SELECT credits, is_premium, is_business FROM users WHERE id = $1',
       [userId]
     );
 
@@ -83,8 +83,8 @@ export async function hasEnoughCredits(userId: number, required: number = CREDIT
 
     const user = result.rows[0];
 
-    // Usuários premium não precisam de créditos
-    if (user.is_premium) {
+    // Usuários premium ou business não precisam de créditos
+    if (user.is_premium || user.is_business) {
       return true;
     }
 
@@ -194,7 +194,7 @@ export async function getUserCredits(userId: number): Promise<number> {
     }
     
     const result = await pool.query(
-      'SELECT credits, is_premium FROM users WHERE id = $1',
+      'SELECT credits, is_premium, is_business FROM users WHERE id = $1',
       [userId]
     );
 
@@ -204,8 +204,8 @@ export async function getUserCredits(userId: number): Promise<number> {
 
     const user = result.rows[0];
 
-    // Usuários premium não têm limite de créditos
-    if (user.is_premium) {
+    // Usuários premium ou business não têm limite de créditos
+    if (user.is_premium || user.is_business) {
       return -1; // -1 significa ilimitado
     }
 

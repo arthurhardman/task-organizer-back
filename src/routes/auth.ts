@@ -195,10 +195,16 @@ router.post('/register', async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' } as jwt.SignOptions
     );
 
+    // Garantir que se for business, também seja premium
+    if (user.is_business && !user.is_premium) {
+      await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [user.id]);
+      user.is_premium = true;
+    }
+
     res.status(201).json({ 
       user: {
         ...user,
-        isPremium: user.is_premium || false,
+        isPremium: user.is_premium || user.is_business || false,
         language: 'pt',
         credits: 25,
         isAdmin: user.is_admin || false,
@@ -242,7 +248,13 @@ router.post('/login', async (req, res) => {
     }
 
     // Verificar e atualizar status premium baseado na assinatura
-    const isPremium = await updateUserPremiumStatus(user.id);
+    let isPremium = await updateUserPremiumStatus(user.id);
+    
+    // Garantir que se for business, também seja premium
+    if (user.is_business && !isPremium) {
+      await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [user.id]);
+      isPremium = true;
+    }
     
     // Inicializar créditos se necessário
     await initializeCredits(user.id);
@@ -260,7 +272,7 @@ router.post('/login', async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.name,
-        isPremium: isPremium,
+        isPremium: isPremium || user.is_business || false,
         language: user.language,
         credits: credits,
         isAdmin: user.is_admin || false,
@@ -280,14 +292,11 @@ router.get('/me', authenticate, async (req, res) => {
     const authReq = req as any;
     
     // Verificar e atualizar status premium
-    const isPremium = await updateUserPremiumStatus(authReq.userId);
+    let isPremium = await updateUserPremiumStatus(authReq.userId);
     
-    // Inicializar créditos se necessário
-    await initializeCredits(authReq.userId);
-    const credits = await getUserCredits(authReq.userId);
-    
+    // Buscar dados do usuário
     const result = await pool.query(
-      'SELECT id, email, name, language, business_id, is_admin, is_business FROM users WHERE id = $1',
+      'SELECT id, email, name, language, business_id, is_admin, is_business, is_premium FROM users WHERE id = $1',
       [authReq.userId]
     );
 
@@ -295,16 +304,28 @@ router.get('/me', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Usuário não encontrado' });
     }
 
+    const user = result.rows[0];
+    
+    // Garantir que se for business, também seja premium
+    if (user.is_business && !user.is_premium) {
+      await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [authReq.userId]);
+      isPremium = true;
+    }
+    
+    // Inicializar créditos se necessário
+    await initializeCredits(authReq.userId);
+    const credits = await getUserCredits(authReq.userId);
+
     res.json({
-      id: result.rows[0].id,
-      email: result.rows[0].email,
-      name: result.rows[0].name,
-      isPremium: isPremium,
-      language: result.rows[0].language,
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      isPremium: isPremium || user.is_business || false,
+      language: user.language,
       credits: credits,
-      isAdmin: result.rows[0].is_admin || false,
-      isBusiness: result.rows[0].is_business || false,
-      businessId: result.rows[0].business_id || null,
+      isAdmin: user.is_admin || false,
+      isBusiness: user.is_business || false,
+      businessId: user.business_id || null,
     });
   } catch (error) {
     res.status(500).json({ error: 'Erro ao buscar usuário' });

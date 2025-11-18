@@ -58,9 +58,32 @@ export async function checkSubscriptionStatus(userId: number): Promise<boolean> 
 
 /**
  * Atualiza o status premium do usuário baseado na assinatura
+ * Nota: Usuários business sempre são premium
  */
 export async function updateUserPremiumStatus(userId: number): Promise<boolean> {
   try {
+    // Verificar se usuário é business primeiro
+    const userResult = await pool.query(
+      'SELECT is_business FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return false;
+    }
+
+    const isBusiness = userResult.rows[0].is_business || false;
+
+    // Se for business, sempre é premium
+    if (isBusiness) {
+      await pool.query(
+        'UPDATE users SET is_premium = TRUE WHERE id = $1',
+        [userId]
+      );
+      return true;
+    }
+
+    // Se não for business, verificar assinatura
     const isActive = await checkSubscriptionStatus(userId);
     
     await pool.query(
