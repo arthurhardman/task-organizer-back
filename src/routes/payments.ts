@@ -25,6 +25,75 @@ router.get('/checkout-url', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
+// Preparar dados da empresa antes de contratar plano business
+router.post('/business/prepare', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { razao_social, cnpj } = req.body;
+
+    if (!razao_social || !cnpj) {
+      return res.status(400).json({ error: 'Razão Social e CNPJ são obrigatórios' });
+    }
+
+    // Validar formato básico do CNPJ (14 dígitos)
+    const cnpjClean = cnpj.replace(/[^\d]/g, '');
+    if (cnpjClean.length !== 14) {
+      return res.status(400).json({ error: 'CNPJ inválido. Deve conter 14 dígitos.' });
+    }
+
+    // Verificar se já existe business com este CNPJ
+    const existingBusiness = await pool.query(
+      'SELECT id FROM businesses WHERE cnpj = $1',
+      [cnpjClean]
+    );
+
+    if (existingBusiness.rows.length > 0) {
+      return res.status(400).json({ error: 'Já existe uma empresa cadastrada com este CNPJ' });
+    }
+
+    // Verificar se usuário já tem business
+    const userResult = await pool.query(
+      'SELECT business_id FROM users WHERE id = $1',
+      [req.userId]
+    );
+
+    let businessId: number | null = null;
+
+    if (userResult.rows.length > 0 && userResult.rows[0].business_id) {
+      // Usuário já tem business - atualizar dados
+      businessId = userResult.rows[0].business_id;
+      await pool.query(
+        'UPDATE businesses SET razao_social = $1, cnpj = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+        [razao_social, cnpjClean, businessId]
+      );
+    } else {
+      // Criar novo business com os dados fornecidos
+      const domain = req.body.email?.split('@')[1]?.toLowerCase() || `empresa-${Date.now()}.com`;
+      const businessResult = await pool.query(
+        'INSERT INTO businesses (name, razao_social, cnpj, domain, max_users) VALUES ($1, $2, $3, $4, 20) RETURNING id',
+        [razao_social, razao_social, cnpjClean, domain]
+      );
+      businessId = businessResult.rows[0].id;
+
+      // Associar usuário ao business
+      await pool.query(
+        'UPDATE users SET business_id = $1 WHERE id = $2',
+        [businessId, req.userId]
+      );
+    }
+
+    res.json({
+      message: 'Dados da empresa salvos com sucesso',
+      businessId,
+    });
+  } catch (error: any) {
+    if (error.code === '23505') {
+      return res.status(400).json({ error: 'CNPJ já cadastrado' });
+    }
+    console.error('Error preparing business data:', error);
+    res.status(500).json({ error: 'Erro ao preparar dados da empresa' });
+  }
+});
+
 // Webhook handler
 router.post('/webhook', express.json(), async (req, res) => {
   try {
@@ -256,11 +325,23 @@ router.post('/webhook', express.json(), async (req, res) => {
             
             if (userBusinessResult.rows.length > 0 && userBusinessResult.rows[0].business_id) {
               const businessId = userBusinessResult.rows[0].business_id;
-              // Garantir que o business tenha max_users = 20
+              // Garantir que o business tenha max_users = 20 e extra_users_count = 0
               await pool.query(
-                'UPDATE businesses SET max_users = 20, extra_users_count = 0 WHERE id = $1',
+                'UPDATE businesses SET max_users = 20, extra_users_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
                 [businessId]
               );
+              
+              // Verificar se business tem razao_social e cnpj (obrigatórios)
+              const businessCheck = await pool.query(
+                'SELECT razao_social, cnpj FROM businesses WHERE id = $1',
+                [businessId]
+              );
+              
+              if (businessCheck.rows.length > 0 && (!businessCheck.rows[0].razao_social || !businessCheck.rows[0].cnpj)) {
+                console.warn('⚠️ Business ativado mas sem Razão Social ou CNPJ. Dados devem ser preenchidos antes do pagamento.');
+              }
+            } else {
+              console.warn('⚠️ Usuário contratou plano Business mas não possui business associado. Business deve ser criado antes do pagamento.');
             }
             
             console.log('✅ Usuário atualizado para BUSINESS (admin):', targetUserId, `(email: ${customerEmail})`);
@@ -478,6 +559,159 @@ router.get('/status', authenticate, async (req: AuthRequest, res) => {
     }
     console.error('Error fetching subscription status:', error);
     res.status(500).json({ error: 'Erro ao buscar status' });
+  }
+});
+
+// Calcular valor da renovação do business (usuários extras + renovação)
+router.get('/business/renewal-cost', authenticate, async (req: AuthRequest, res) => {
+  try {
+    // Verificar se usuário é admin de business
+    const userResult = await pool.query(
+      'SELECT business_id, is_admin, is_business FROM users WHERE id = $1',
+      [req.userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    const user = userResult.rows[0];
+
+    if (!user.is_business || !user.is_admin || !user.business_id) {
+      return res.status(403).json({ error: 'Apenas administradores de empresas com plano Business podem acessar esta funcionalidade' });
+    }
+
+    const businessId = user.business_id;
+
+    // Buscar subscription ativa do business
+    const subscriptionResult = await pool.query(
+      `SELECT s.id, s.expires_at, s.created_at, s.amount
+       FROM subscriptions s
+       INNER JOIN users u ON u.id = s.user_id
+       WHERE u.business_id = $1 AND u.is_business = TRUE AND s.status = 'active'
+       ORDER BY s.created_at DESC
+       LIMIT 1`,
+      [businessId]
+    );
+
+    if (subscriptionResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Nenhuma assinatura ativa encontrada' });
+    }
+
+    const subscription = subscriptionResult.rows[0];
+    const expiresAt = subscription.expires_at ? new Date(subscription.expires_at) : null;
+
+    if (!expiresAt) {
+      return res.status(400).json({ error: 'Assinatura sem data de expiração' });
+    }
+
+    // Buscar usuários extras não cobrados do período atual
+    const extraUsersResult = await pool.query(
+      `SELECT COUNT(*) as count, SUM(cost) as total_cost
+       FROM extra_users_history
+       WHERE business_id = $1 
+         AND subscription_period_start >= $2
+         AND subscription_period_end <= $3
+         AND charged = FALSE`,
+      [businessId, subscription.created_at, expiresAt]
+    );
+
+    const extraUsersCount = parseInt(extraUsersResult.rows[0].count || '0');
+    const extraUsersCost = parseFloat(extraUsersResult.rows[0].total_cost || '0');
+
+    // Valor da renovação do business (R$ 99,90)
+    const BUSINESS_PLAN_PRICE = 99.90;
+    const renewalCost = BUSINESS_PLAN_PRICE;
+    const totalCost = renewalCost + extraUsersCost;
+
+    res.json({
+      businessId,
+      subscriptionId: subscription.id,
+      expiresAt,
+      renewalCost,
+      extraUsersCount,
+      extraUsersCost,
+      totalCost,
+      breakdown: {
+        businessRenewal: renewalCost,
+        extraUsers: extraUsersCost,
+        total: totalCost,
+      },
+    });
+  } catch (error) {
+    console.error('Error calculating renewal cost:', error);
+    res.status(500).json({ error: 'Erro ao calcular custo de renovação' });
+  }
+});
+
+// Processar renovação do business (marcar usuários extras como cobrados e criar nova subscription)
+router.post('/business/renew', authenticate, async (req: AuthRequest, res) => {
+  try {
+    // Verificar se usuário é admin de business
+    const userResult = await pool.query(
+      'SELECT business_id, is_admin, is_business FROM users WHERE id = $1',
+      [req.userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    const user = userResult.rows[0];
+
+    if (!user.is_business || !user.is_admin || !user.business_id) {
+      return res.status(403).json({ error: 'Apenas administradores de empresas com plano Business podem renovar' });
+    }
+
+    const businessId = user.business_id;
+
+    // Buscar subscription ativa do business
+    const subscriptionResult = await pool.query(
+      `SELECT s.id, s.expires_at, s.created_at, s.ggcheckout_checkout_id
+       FROM subscriptions s
+       INNER JOIN users u ON u.id = s.user_id
+       WHERE u.business_id = $1 AND u.is_business = TRUE AND s.status = 'active'
+       ORDER BY s.created_at DESC
+       LIMIT 1`,
+      [businessId]
+    );
+
+    if (subscriptionResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Nenhuma assinatura ativa encontrada' });
+    }
+
+    const subscription = subscriptionResult.rows[0];
+    const expiresAt = subscription.expires_at ? new Date(subscription.expires_at) : null;
+
+    if (!expiresAt) {
+      return res.status(400).json({ error: 'Assinatura sem data de expiração' });
+    }
+
+    // Marcar usuários extras do período como cobrados
+    await pool.query(
+      `UPDATE extra_users_history
+       SET charged = TRUE
+       WHERE business_id = $1 
+         AND subscription_period_start >= $2
+         AND subscription_period_end <= $3
+         AND charged = FALSE`,
+      [businessId, subscription.created_at, expiresAt]
+    );
+
+    // Calcular nova data de expiração (1 mês a partir de agora)
+    const newExpiresAt = new Date();
+    newExpiresAt.setMonth(newExpiresAt.getMonth() + 1);
+
+    // Criar nova subscription (será atualizada pelo webhook quando o pagamento for processado)
+    // Por enquanto, apenas retornamos sucesso
+    res.json({
+      message: 'Renovação processada. Aguarde confirmação do pagamento.',
+      businessId,
+      newExpiresAt,
+    });
+  } catch (error) {
+    console.error('Error processing renewal:', error);
+    res.status(500).json({ error: 'Erro ao processar renovação' });
   }
 });
 

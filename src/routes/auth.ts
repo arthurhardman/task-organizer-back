@@ -48,37 +48,45 @@ router.post('/register', async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const emailLower = email.toLowerCase();
 
-    // Extrair domínio do email
-    const domain = email.split('@')[1]?.toLowerCase();
-    if (!domain) {
-      return res.status(400).json({ error: 'Email inválido' });
+    // Verificar se email já está cadastrado
+    const existingUser = await pool.query(
+      'SELECT id FROM users WHERE email = $1',
+      [emailLower]
+    );
+
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ error: 'Email já cadastrado' });
     }
 
-    // Verificar se business existe para este domínio
-    const businessResult = await pool.query(
-      'SELECT id, max_users, extra_users_count FROM businesses WHERE domain = $1',
-      [domain]
+    // Verificar se existe convite pendente para este email
+    const invitationResult = await pool.query(
+      `SELECT bi.business_id, bi.id as invitation_id, b.max_users, b.extra_users_count
+       FROM business_invitations bi
+       INNER JOIN businesses b ON b.id = bi.business_id
+       WHERE bi.email = $1`,
+      [emailLower]
     );
 
     let businessId: number | null = null;
     let isAdmin = false;
 
-    if (businessResult.rows.length > 0) {
-      // Business existe - verificar se tem plano business ativo
-      const business = businessResult.rows[0];
-      businessId = business.id;
+    if (invitationResult.rows.length > 0) {
+      // Usuário tem convite - associar ao business
+      const invitation = invitationResult.rows[0];
+      businessId = invitation.business_id;
 
-      // Verificar se há admin com is_business = true neste business
+      // Verificar se business tem plano business ativo (tem admin com is_business = true)
       const adminCheck = await pool.query(
         'SELECT id FROM users WHERE business_id = $1 AND is_business = TRUE AND is_admin = TRUE',
         [businessId]
       );
 
       if (adminCheck.rows.length === 0) {
-        // Não há admin com plano business - não pode registrar
+        // Não há admin com plano business - não pode registrar ainda
         return res.status(403).json({ 
-          error: 'Este domínio não possui um plano Business ativo. Entre em contato com o administrador da empresa.' 
+          error: 'Este email foi convidado, mas a empresa ainda não possui um plano Business ativo. Entre em contato com o administrador.' 
         });
       }
 
@@ -88,8 +96,8 @@ router.post('/register', async (req, res) => {
         [businessId]
       );
       const currentUserCount = parseInt(userCountResult.rows[0].count);
-      const maxUsers = business.max_users || 20;
-      const extraUsers = business.extra_users_count || 0;
+      const maxUsers = invitation.max_users || 20;
+      const extraUsers = invitation.extra_users_count || 0;
       const totalAllowed = maxUsers + extraUsers;
 
       if (currentUserCount >= totalAllowed) {
@@ -101,22 +109,64 @@ router.post('/register', async (req, res) => {
       // Não é admin - apenas usuário normal
       isAdmin = false;
     } else {
-      // Business não existe - criar novo (mas não será admin a menos que compre business)
-      const newBusiness = await pool.query(
-        'INSERT INTO businesses (name, domain, max_users) VALUES ($1, $2, 20) RETURNING id',
-        [domain.split('.')[0] || domain, domain]
-      );
-      businessId = newBusiness.rows[0].id;
-      // Primeiro usuário do business novo (mas sem plano business ainda)
+      // Sem convite - criar usuário sem business
+      businessId = null;
       isAdmin = false;
     }
 
+    // Criar usuário
     const result = await pool.query(
       'INSERT INTO users (email, password_hash, name, credits, business_id, is_admin) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, name, business_id, is_admin',
-      [email, hashedPassword, name, 25, businessId, isAdmin] // 25 créditos iniciais
+      [emailLower, hashedPassword, name, 25, businessId, isAdmin] // 25 créditos iniciais
     );
 
     const user = result.rows[0];
+
+    // Se foi associado a um business via convite, remover o convite e adicionar ao histórico se necessário
+    if (invitationResult.rows.length > 0 && businessId) {
+      // Remover convite
+      await pool.query('DELETE FROM business_invitations WHERE id = $1', [invitationResult.rows[0].invitation_id]);
+
+      // Verificar se precisa adicionar ao histórico de usuários extras
+      const userCountResult = await pool.query(
+        'SELECT COUNT(*) FROM users WHERE business_id = $1',
+        [businessId]
+      );
+      const currentUserCount = parseInt(userCountResult.rows[0].count);
+      const maxUsers = invitationResult.rows[0].max_users || 20;
+      const extraUsers = invitationResult.rows[0].extra_users_count || 0;
+
+      if (currentUserCount > maxUsers && currentUserCount > maxUsers + extraUsers) {
+        // Buscar subscription ativa
+        const subscriptionResult = await pool.query(
+          `SELECT expires_at, created_at 
+           FROM subscriptions s
+           INNER JOIN users u ON u.id = s.user_id
+           WHERE u.business_id = $1 AND u.is_business = TRUE AND s.status = 'active'
+           ORDER BY s.created_at DESC
+           LIMIT 1`,
+          [businessId]
+        );
+
+        let periodStart = new Date();
+        let periodEnd = new Date();
+        periodEnd.setMonth(periodEnd.getMonth() + 1);
+
+        if (subscriptionResult.rows.length > 0) {
+          const sub = subscriptionResult.rows[0];
+          periodStart = new Date(sub.created_at);
+          periodEnd = sub.expires_at ? new Date(sub.expires_at) : periodEnd;
+        }
+
+        // Adicionar ao histórico de usuários extras
+        await pool.query(
+          `INSERT INTO extra_users_history (business_id, user_id, cost, subscription_period_start, subscription_period_end, charged)
+           VALUES ($1, $2, $3, $4, $5, FALSE)`,
+          [businessId, user.id, 15.00, periodStart, periodEnd]
+        );
+      }
+    }
+
     const secret = process.env.JWT_SECRET || 'default-secret-change-in-production';
     const token = jwt.sign(
       { userId: user.id },
