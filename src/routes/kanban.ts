@@ -117,14 +117,16 @@ router.put('/columns/:id', authenticate, async (req: AuthRequest, res) => {
       updates.push(`name = $${paramIndex++}`);
       values.push(name);
     }
-    if (position !== undefined) {
+    if (position !== undefined && position !== null) {
       // Validar que position é um número válido
       const positionNum = typeof position === 'string' ? parseInt(position, 10) : Number(position);
-      if (isNaN(positionNum)) {
-        return res.status(400).json({ error: 'Position deve ser um número válido' });
+      if (isNaN(positionNum) || positionNum < 0) {
+        // Se position for inválido, simplesmente não atualizar (não retornar erro)
+        console.warn(`Position inválido recebido: ${position}, ignorando atualização de position`);
+      } else {
+        updates.push(`position = $${paramIndex++}`);
+        values.push(positionNum);
       }
-      updates.push(`position = $${paramIndex++}`);
-      values.push(positionNum);
     }
     if (color !== undefined) {
       updates.push(`color = $${paramIndex++}`);
