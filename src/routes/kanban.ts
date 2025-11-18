@@ -93,6 +93,77 @@ router.post('/columns', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
+// Reorder columns (update positions) - DEVE VIR ANTES DE /columns/:id
+router.put('/columns/reorder', authenticate, async (req: AuthRequest, res) => {
+  const client = await pool.connect();
+  try {
+    const { columns } = req.body; // Array de { id, position }
+
+    if (!Array.isArray(columns)) {
+      return res.status(400).json({ error: 'Colunas devem ser um array' });
+    }
+
+    // Validar e normalizar os dados antes de processar
+    const validatedColumns: Array<{ id: number; position: number }> = [];
+    
+    for (const column of columns) {
+      // Validar que id e position existem
+      if (column.id === undefined || column.id === null || column.position === undefined || column.position === null) {
+        return res.status(400).json({ 
+          error: `Coluna inválida: id=${column.id}, position=${column.position}. Todos os campos são obrigatórios.` 
+        });
+      }
+      
+      // Converter para números
+      const idNum = typeof column.id === 'string' ? parseInt(column.id, 10) : Number(column.id);
+      const positionNum = typeof column.position === 'string' ? parseInt(column.position, 10) : Number(column.position);
+      
+      // Validar que são números válidos
+      if (isNaN(idNum) || isNaN(positionNum) || idNum <= 0 || positionNum < 0) {
+        return res.status(400).json({ 
+          error: `Valores inválidos: id=${column.id} (${idNum}), position=${column.position} (${positionNum})` 
+        });
+      }
+      
+      validatedColumns.push({ id: idNum, position: positionNum });
+    }
+
+    // Validar que todos os IDs pertencem ao usuário
+    const columnIds = validatedColumns.map(col => col.id);
+    const checkResult = await client.query(
+      'SELECT id FROM kanban_columns WHERE id = ANY($1) AND user_id = $2',
+      [columnIds, req.userId]
+    );
+
+    if (checkResult.rows.length !== validatedColumns.length) {
+      return res.status(403).json({ error: 'Algumas colunas não pertencem ao usuário' });
+    }
+
+    // Atualizar posições em uma transação
+    await client.query('BEGIN');
+
+    try {
+      for (const column of validatedColumns) {
+        await client.query(
+          'UPDATE kanban_columns SET position = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND user_id = $3',
+          [column.position, column.id, req.userId]
+        );
+      }
+
+      await client.query('COMMIT');
+      res.json({ message: 'Ordem das colunas atualizada com sucesso' });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error reordering kanban columns:', error);
+    res.status(500).json({ error: 'Erro ao reordenar colunas do Kanban' });
+  } finally {
+    client.release();
+  }
+});
+
 // Update a column (apenas nome e cor - position é atualizado apenas via reorder)
 router.put('/columns/:id', authenticate, async (req: AuthRequest, res) => {
   try {
@@ -212,77 +283,6 @@ router.delete('/columns/:id', authenticate, async (req: AuthRequest, res) => {
   } catch (error) {
     console.error('Error deleting kanban column:', error);
     res.status(500).json({ error: 'Erro ao excluir coluna do Kanban' });
-  }
-});
-
-// Reorder columns (update positions)
-router.put('/columns/reorder', authenticate, async (req: AuthRequest, res) => {
-  const client = await pool.connect();
-  try {
-    const { columns } = req.body; // Array de { id, position }
-
-    if (!Array.isArray(columns)) {
-      return res.status(400).json({ error: 'Colunas devem ser um array' });
-    }
-
-    // Validar e normalizar os dados antes de processar
-    const validatedColumns: Array<{ id: number; position: number }> = [];
-    
-    for (const column of columns) {
-      // Validar que id e position existem
-      if (column.id === undefined || column.id === null || column.position === undefined || column.position === null) {
-        return res.status(400).json({ 
-          error: `Coluna inválida: id=${column.id}, position=${column.position}. Todos os campos são obrigatórios.` 
-        });
-      }
-      
-      // Converter para números
-      const idNum = typeof column.id === 'string' ? parseInt(column.id, 10) : Number(column.id);
-      const positionNum = typeof column.position === 'string' ? parseInt(column.position, 10) : Number(column.position);
-      
-      // Validar que são números válidos
-      if (isNaN(idNum) || isNaN(positionNum) || idNum <= 0 || positionNum < 0) {
-        return res.status(400).json({ 
-          error: `Valores inválidos: id=${column.id} (${idNum}), position=${column.position} (${positionNum})` 
-        });
-      }
-      
-      validatedColumns.push({ id: idNum, position: positionNum });
-    }
-
-    // Validar que todos os IDs pertencem ao usuário
-    const columnIds = validatedColumns.map(col => col.id);
-    const checkResult = await client.query(
-      'SELECT id FROM kanban_columns WHERE id = ANY($1) AND user_id = $2',
-      [columnIds, req.userId]
-    );
-
-    if (checkResult.rows.length !== validatedColumns.length) {
-      return res.status(403).json({ error: 'Algumas colunas não pertencem ao usuário' });
-    }
-
-    // Atualizar posições em uma transação
-    await client.query('BEGIN');
-
-    try {
-      for (const column of validatedColumns) {
-        await client.query(
-          'UPDATE kanban_columns SET position = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND user_id = $3',
-          [column.position, column.id, req.userId]
-        );
-      }
-
-      await client.query('COMMIT');
-      res.json({ message: 'Ordem das colunas atualizada com sucesso' });
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    }
-  } catch (error) {
-    console.error('Error reordering kanban columns:', error);
-    res.status(500).json({ error: 'Erro ao reordenar colunas do Kanban' });
-  } finally {
-    client.release();
   }
 });
 
