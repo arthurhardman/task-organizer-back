@@ -186,11 +186,14 @@ router.post('/webhook', express.json(), async (req, res) => {
           const BASIC_PLAN_CREDITS = 50;
           const BASIC_PLAN_PRICE = 24.90;
           const PREMIUM_PLAN_PRICE = 39.90;
+          const BUSINESS_PLAN_PRICE = 99.90; // Preço do plano business
           const BASIC_PRODUCT_ID = 'XMMYz9QVFTWABp3Jl3pQ';
           const PREMIUM_PRODUCT_ID = '3YmbtSMTrFkHujcQN8h8';
+          const BUSINESS_PRODUCT_ID = 'Ndm28xW40nGEP5oRSNE4';
           
           let isPremium = false;
           let isBasic = false;
+          let isBusiness = false;
           let planName = 'UNKNOWN';
           let productId = null;
           
@@ -207,11 +210,14 @@ router.post('/webhook', express.json(), async (req, res) => {
             } else if (productId === BASIC_PRODUCT_ID) {
               isBasic = true;
               planName = 'BASIC';
+            } else if (productId === BUSINESS_PRODUCT_ID) {
+              isBusiness = true;
+              planName = 'BUSINESS';
             }
           }
           
           // Verificar produto único (fallback)
-          if (!isPremium && !isBasic && webhookData?.product) {
+          if (!isPremium && !isBasic && !isBusiness && webhookData?.product) {
             productId = webhookData.product?.id;
             
             console.log('🔍 Analisando produto único - ID:', productId);
@@ -222,6 +228,9 @@ router.post('/webhook', express.json(), async (req, res) => {
             } else if (productId === BASIC_PRODUCT_ID) {
               isBasic = true;
               planName = 'BASIC';
+            } else if (productId === BUSINESS_PRODUCT_ID) {
+              isBusiness = true;
+              planName = 'BUSINESS';
             }
           }
           
@@ -229,12 +238,33 @@ router.post('/webhook', express.json(), async (req, res) => {
             productId,
             isPremium,
             isBasic,
+            isBusiness,
             planName,
             email: customerEmail
           });
 
           // Atualizar usuário baseado no plano identificado
-          if (isPremium) {
+          if (isBusiness) {
+            // Plano Business: ativar is_business, is_premium e tornar admin
+            await pool.query('UPDATE users SET is_business = TRUE, is_premium = TRUE, is_admin = TRUE WHERE id = $1', [targetUserId]);
+            
+            // Obter business_id do usuário para atualizar o business
+            const userBusinessResult = await pool.query(
+              'SELECT business_id FROM users WHERE id = $1',
+              [targetUserId]
+            );
+            
+            if (userBusinessResult.rows.length > 0 && userBusinessResult.rows[0].business_id) {
+              const businessId = userBusinessResult.rows[0].business_id;
+              // Garantir que o business tenha max_users = 20
+              await pool.query(
+                'UPDATE businesses SET max_users = 20, extra_users_count = 0 WHERE id = $1',
+                [businessId]
+              );
+            }
+            
+            console.log('✅ Usuário atualizado para BUSINESS (admin):', targetUserId, `(email: ${customerEmail})`);
+          } else if (isPremium) {
             await pool.query('UPDATE users SET is_premium = TRUE WHERE id = $1', [targetUserId]);
             console.log('✅ Usuário atualizado para PREMIUM:', targetUserId, `(email: ${customerEmail})`);
           } else if (isBasic) {
@@ -250,6 +280,7 @@ router.post('/webhook', express.json(), async (req, res) => {
             console.warn('⚠️ IDs esperados:');
             console.warn('   - Básico:', BASIC_PRODUCT_ID);
             console.warn('   - Premium:', PREMIUM_PRODUCT_ID);
+            console.warn('   - Business:', BUSINESS_PRODUCT_ID);
             // Não fazer nada se não conseguir identificar
             return res.json({ 
               received: true, 
@@ -259,8 +290,8 @@ router.post('/webhook', express.json(), async (req, res) => {
             });
           }
 
-          // Calcular data de expiração (1 mês a partir de agora para premium, null para básico)
-          const expiresAt = isPremium ? (() => {
+          // Calcular data de expiração (1 mês a partir de agora para premium/business, null para básico)
+          const expiresAt = (isPremium || isBusiness) ? (() => {
             const date = new Date();
             date.setMonth(date.getMonth() + 1);
             return date;
@@ -268,7 +299,9 @@ router.post('/webhook', express.json(), async (req, res) => {
 
           // Usar valores fixos dos planos, independente do valor que vier do webhook
           let amount: number;
-          if (isPremium) {
+          if (isBusiness) {
+            amount = BUSINESS_PLAN_PRICE;
+          } else if (isPremium) {
             amount = PREMIUM_PLAN_PRICE;
           } else if (isBasic) {
             amount = BASIC_PLAN_PRICE;

@@ -1,23 +1,29 @@
 import express from 'express';
 import { pool } from '../db';
 import { authenticate, AuthRequest } from '../middleware/auth';
+import { requireBusinessAccess } from '../middleware/business';
 
 const router = express.Router();
 
 // Get all tickets for the business
-router.get('/', authenticate, async (req: AuthRequest, res) => {
+router.get('/', authenticate, requireBusinessAccess, async (req: AuthRequest, res) => {
   try {
-    // Obter business_id do usuário
-    const userResult = await pool.query(
-      'SELECT business_id FROM users WHERE id = $1',
-      [req.userId]
-    );
-
-    if (userResult.rows.length === 0 || !userResult.rows[0].business_id) {
-      return res.status(404).json({ error: 'Usuário não está associado a uma empresa' });
+    // Obter business_id do usuário (já vem do middleware requireBusinessAccess)
+    // Mas vamos garantir que temos o businessId
+    if (!req.businessId) {
+      const userResult = await pool.query(
+        'SELECT business_id FROM users WHERE id = $1',
+        [req.userId]
+      );
+      
+      if (userResult.rows.length === 0 || !userResult.rows[0].business_id) {
+        return res.status(404).json({ error: 'Usuário não está associado a uma empresa' });
+      }
+      
+      req.businessId = userResult.rows[0].business_id;
     }
 
-    const businessId = userResult.rows[0].business_id;
+    const businessId = req.businessId;
 
     const result = await pool.query(
       `SELECT t.id, t.title, t.description, t.status, t.priority, 
@@ -45,7 +51,7 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
 });
 
 // Get ticket by ID
-router.get('/:id', authenticate, async (req: AuthRequest, res) => {
+router.get('/:id', authenticate, requireBusinessAccess, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -86,7 +92,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
 });
 
 // Create ticket
-router.post('/', authenticate, async (req: AuthRequest, res) => {
+router.post('/', authenticate, requireBusinessAccess, async (req: AuthRequest, res) => {
   const client = await pool.connect();
   try {
     const { title, description, assigned_team_id, priority } = req.body;
@@ -194,7 +200,7 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
 });
 
 // Update ticket (atribuir responsável, mudar status, etc)
-router.put('/:id', authenticate, async (req: AuthRequest, res) => {
+router.put('/:id', authenticate, requireBusinessAccess, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { assigned_to, status, priority } = req.body;
@@ -312,7 +318,7 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
 });
 
 // Delete ticket
-router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
+router.delete('/:id', authenticate, requireBusinessAccess, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 

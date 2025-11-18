@@ -82,7 +82,19 @@ CREATE TABLE IF NOT EXISTS businesses (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Adicionar business_id e is_admin na tabela users (se não existirem)
+-- Adicionar campos de controle de usuários (se não existirem)
+DO $$ 
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'businesses' AND column_name = 'max_users') THEN
+    ALTER TABLE businesses ADD COLUMN max_users INTEGER DEFAULT 20;
+  END IF;
+  
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'businesses' AND column_name = 'extra_users_count') THEN
+    ALTER TABLE businesses ADD COLUMN extra_users_count INTEGER DEFAULT 0;
+  END IF;
+END $$;
+
+-- Adicionar business_id, is_admin e is_business na tabela users (se não existirem)
 DO $$ 
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'business_id') THEN
@@ -92,6 +104,10 @@ BEGIN
   
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'is_admin') THEN
     ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE;
+  END IF;
+  
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'is_business') THEN
+    ALTER TABLE users ADD COLUMN is_business BOOLEAN DEFAULT FALSE;
   END IF;
 END $$;
 

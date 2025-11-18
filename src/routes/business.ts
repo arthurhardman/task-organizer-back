@@ -1,6 +1,7 @@
 import express from 'express';
 import { pool } from '../db';
 import { authenticate, AuthRequest } from '../middleware/auth';
+import { requireBusinessAccess } from '../middleware/business';
 
 const router = express.Router();
 
@@ -47,19 +48,23 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
 });
 
 // Get all teams for the business
-router.get('/teams', authenticate, async (req: AuthRequest, res) => {
+router.get('/teams', authenticate, requireBusinessAccess, async (req: AuthRequest, res) => {
   try {
-    // Obter business_id do usuário
-    const userResult = await pool.query(
-      'SELECT business_id FROM users WHERE id = $1',
-      [req.userId]
-    );
-
-    if (userResult.rows.length === 0 || !userResult.rows[0].business_id) {
-      return res.status(404).json({ error: 'Usuário não está associado a uma empresa' });
+    // Obter business_id do usuário (já vem do middleware requireBusinessAccess)
+    if (!req.businessId) {
+      const userResult = await pool.query(
+        'SELECT business_id FROM users WHERE id = $1',
+        [req.userId]
+      );
+      
+      if (userResult.rows.length === 0 || !userResult.rows[0].business_id) {
+        return res.status(404).json({ error: 'Usuário não está associado a uma empresa' });
+      }
+      
+      req.businessId = userResult.rows[0].business_id;
     }
 
-    const businessId = userResult.rows[0].business_id;
+    const businessId = req.businessId;
 
     const result = await pool.query(
       `SELECT t.id, t.name, t.description, t.created_at,
@@ -153,7 +158,7 @@ router.delete('/teams/:id', authenticate, requireAdmin, async (req: AuthRequest,
 });
 
 // Get team members
-router.get('/teams/:id/members', authenticate, async (req: AuthRequest, res) => {
+router.get('/teams/:id/members', authenticate, requireBusinessAccess, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -264,27 +269,6 @@ router.delete('/teams/:id/members/:userId', authenticate, requireAdmin, async (r
   } catch (error) {
     console.error('Error removing team member:', error);
     res.status(500).json({ error: 'Erro ao remover membro da equipe' });
-  }
-});
-
-// Get all users in the business (para adicionar a equipes)
-router.get('/users', authenticate, requireAdmin, async (req: AuthRequest, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT u.id, u.name, u.email, u.is_admin,
-              COUNT(DISTINCT tm.team_id) as team_count
-       FROM users u
-       LEFT JOIN team_members tm ON tm.user_id = u.id
-       WHERE u.business_id = $1
-       GROUP BY u.id
-       ORDER BY u.name ASC`,
-      [req.businessId]
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching business users:', error);
-    res.status(500).json({ error: 'Erro ao buscar usuários da empresa' });
   }
 });
 

@@ -27,7 +27,7 @@ async function getOrCreateBusiness(email: string): Promise<number | null> {
 
     // Criar novo business
     const newBusiness = await pool.query(
-      'INSERT INTO businesses (name, domain) VALUES ($1, $2) RETURNING id',
+      'INSERT INTO businesses (name, domain, max_users) VALUES ($1, $2, 20) RETURNING id',
       [domain.split('.')[0] || domain, domain] // Usar primeira parte do domínio como nome
     );
 
@@ -49,17 +49,66 @@ router.post('/register', async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Obter ou criar business baseado no domínio do email
-    const businessId = await getOrCreateBusiness(email);
-    
-    // Verificar se é o primeiro usuário do business (será admin)
+    // Extrair domínio do email
+    const domain = email.split('@')[1]?.toLowerCase();
+    if (!domain) {
+      return res.status(400).json({ error: 'Email inválido' });
+    }
+
+    // Verificar se business existe para este domínio
+    const businessResult = await pool.query(
+      'SELECT id, max_users, extra_users_count FROM businesses WHERE domain = $1',
+      [domain]
+    );
+
+    let businessId: number | null = null;
     let isAdmin = false;
-    if (businessId) {
-      const existingUsers = await pool.query(
+
+    if (businessResult.rows.length > 0) {
+      // Business existe - verificar se tem plano business ativo
+      const business = businessResult.rows[0];
+      businessId = business.id;
+
+      // Verificar se há admin com is_business = true neste business
+      const adminCheck = await pool.query(
+        'SELECT id FROM users WHERE business_id = $1 AND is_business = TRUE AND is_admin = TRUE',
+        [businessId]
+      );
+
+      if (adminCheck.rows.length === 0) {
+        // Não há admin com plano business - não pode registrar
+        return res.status(403).json({ 
+          error: 'Este domínio não possui um plano Business ativo. Entre em contato com o administrador da empresa.' 
+        });
+      }
+
+      // Contar usuários atuais do business
+      const userCountResult = await pool.query(
         'SELECT COUNT(*) FROM users WHERE business_id = $1',
         [businessId]
       );
-      isAdmin = parseInt(existingUsers.rows[0].count) === 0;
+      const currentUserCount = parseInt(userCountResult.rows[0].count);
+      const maxUsers = business.max_users || 20;
+      const extraUsers = business.extra_users_count || 0;
+      const totalAllowed = maxUsers + extraUsers;
+
+      if (currentUserCount >= totalAllowed) {
+        return res.status(403).json({ 
+          error: `Limite de usuários atingido (${totalAllowed}). Entre em contato com o administrador para adicionar mais usuários.` 
+        });
+      }
+
+      // Não é admin - apenas usuário normal
+      isAdmin = false;
+    } else {
+      // Business não existe - criar novo (mas não será admin a menos que compre business)
+      const newBusiness = await pool.query(
+        'INSERT INTO businesses (name, domain, max_users) VALUES ($1, $2, 20) RETURNING id',
+        [domain.split('.')[0] || domain, domain]
+      );
+      businessId = newBusiness.rows[0].id;
+      // Primeiro usuário do business novo (mas sem plano business ainda)
+      isAdmin = false;
     }
 
     const result = await pool.query(
@@ -82,6 +131,7 @@ router.post('/register', async (req, res) => {
         language: 'pt',
         credits: 25,
         isAdmin: user.is_admin,
+        isBusiness: false,
         businessId: user.business_id,
       },
       token 
@@ -105,7 +155,7 @@ router.post('/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT id, email, password_hash, name, is_premium, language, business_id, is_admin FROM users WHERE email = $1',
+      'SELECT id, email, password_hash, name, is_premium, language, business_id, is_admin, is_business FROM users WHERE email = $1',
       [email]
     );
 
@@ -143,6 +193,7 @@ router.post('/login', async (req, res) => {
         language: user.language,
         credits: credits,
         isAdmin: user.is_admin || false,
+        isBusiness: user.is_business || false,
         businessId: user.business_id || null,
       },
       token,
@@ -165,7 +216,7 @@ router.get('/me', authenticate, async (req, res) => {
     const credits = await getUserCredits(authReq.userId);
     
     const result = await pool.query(
-      'SELECT id, email, name, language, business_id, is_admin FROM users WHERE id = $1',
+      'SELECT id, email, name, language, business_id, is_admin, is_business FROM users WHERE id = $1',
       [authReq.userId]
     );
 
@@ -181,6 +232,7 @@ router.get('/me', authenticate, async (req, res) => {
       language: result.rows[0].language,
       credits: credits,
       isAdmin: result.rows[0].is_admin || false,
+      isBusiness: result.rows[0].is_business || false,
       businessId: result.rows[0].business_id || null,
     });
   } catch (error) {
