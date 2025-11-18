@@ -71,6 +71,8 @@ router.post('/register', async (req, res) => {
 
     let businessId: number | null = null;
     let isAdmin = false;
+    let isBusiness = false;
+    let isPremium = false;
 
     if (invitationResult.rows.length > 0) {
       // Usuário tem convite - associar ao business
@@ -88,6 +90,23 @@ router.post('/register', async (req, res) => {
         return res.status(403).json({ 
           error: 'Este email foi convidado, mas a empresa ainda não possui um plano Business ativo. Entre em contato com o administrador.' 
         });
+      }
+
+      // Verificar se há subscription ativa do business
+      const subscriptionCheck = await pool.query(
+        `SELECT s.id 
+         FROM subscriptions s
+         INNER JOIN users u ON u.id = s.user_id
+         WHERE u.business_id = $1 AND u.is_business = TRUE AND s.status = 'active'
+         ORDER BY s.created_at DESC
+         LIMIT 1`,
+        [businessId]
+      );
+
+      // Se a empresa tem plano business ativo, o usuário também recebe acesso premium e business
+      if (subscriptionCheck.rows.length > 0) {
+        isBusiness = true;
+        isPremium = true;
       }
 
       // Contar usuários atuais do business
@@ -112,12 +131,14 @@ router.post('/register', async (req, res) => {
       // Sem convite - criar usuário sem business
       businessId = null;
       isAdmin = false;
+      isBusiness = false;
+      isPremium = false;
     }
 
     // Criar usuário
     const result = await pool.query(
-      'INSERT INTO users (email, password_hash, name, credits, business_id, is_admin) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, name, business_id, is_admin',
-      [emailLower, hashedPassword, name, 25, businessId, isAdmin] // 25 créditos iniciais
+      'INSERT INTO users (email, password_hash, name, credits, business_id, is_admin, is_business, is_premium) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, email, name, business_id, is_admin, is_business, is_premium',
+      [emailLower, hashedPassword, name, 25, businessId, isAdmin, isBusiness, isPremium] // 25 créditos iniciais
     );
 
     const user = result.rows[0];
@@ -177,11 +198,11 @@ router.post('/register', async (req, res) => {
     res.status(201).json({ 
       user: {
         ...user,
-        isPremium: false,
+        isPremium: user.is_premium || false,
         language: 'pt',
         credits: 25,
-        isAdmin: user.is_admin,
-        isBusiness: false,
+        isAdmin: user.is_admin || false,
+        isBusiness: user.is_business || false,
         businessId: user.business_id,
       },
       token 
