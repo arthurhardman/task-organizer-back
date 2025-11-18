@@ -93,11 +93,16 @@ router.post('/columns', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
-// Update a column
+// Update a column (apenas nome e cor - position é atualizado apenas via reorder)
 router.put('/columns/:id', authenticate, async (req: AuthRequest, res) => {
   try {
-    const { name, position, color } = req.body;
+    const { name, color } = req.body;
     const columnId = parseInt(req.params.id);
+
+    // Validar columnId
+    if (isNaN(columnId) || columnId <= 0) {
+      return res.status(400).json({ error: 'ID da coluna inválido' });
+    }
 
     // Verificar se a coluna pertence ao usuário
     const existing = await pool.query(
@@ -113,28 +118,19 @@ router.put('/columns/:id', authenticate, async (req: AuthRequest, res) => {
     const values: any[] = [];
     let paramIndex = 1;
 
-    if (name !== undefined) {
+    // Apenas atualizar name e color - position NÃO é atualizado aqui
+    if (name !== undefined && name !== null && name.trim() !== '') {
       updates.push(`name = $${paramIndex++}`);
-      values.push(name);
+      values.push(name.trim());
     }
-    if (position !== undefined && position !== null) {
-      // Validar que position é um número válido
-      const positionNum = typeof position === 'string' ? parseInt(position, 10) : Number(position);
-      if (isNaN(positionNum) || positionNum < 0) {
-        // Se position for inválido, simplesmente não atualizar (não retornar erro)
-        console.warn(`Position inválido recebido: ${position}, ignorando atualização de position`);
-      } else {
-        updates.push(`position = $${paramIndex++}`);
-        values.push(positionNum);
-      }
-    }
-    if (color !== undefined) {
+    
+    if (color !== undefined && color !== null && color.trim() !== '') {
       updates.push(`color = $${paramIndex++}`);
-      values.push(color);
+      values.push(color.trim());
     }
 
     if (updates.length === 0) {
-      return res.status(400).json({ error: 'Nenhum campo para atualizar' });
+      return res.status(400).json({ error: 'Nenhum campo válido para atualizar' });
     }
 
     updates.push(`updated_at = CURRENT_TIMESTAMP`);
