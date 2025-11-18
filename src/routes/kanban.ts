@@ -97,11 +97,22 @@ router.post('/columns', authenticate, async (req: AuthRequest, res) => {
 router.put('/columns/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { name, color } = req.body;
-    const columnId = parseInt(req.params.id);
+    const idParam = req.params.id;
+    
+    // Log para debug
+    console.log('Update column - params.id:', idParam, 'type:', typeof idParam);
+    
+    // Validar que o parâmetro existe
+    if (!idParam || idParam.trim() === '') {
+      return res.status(400).json({ error: 'ID da coluna não fornecido' });
+    }
+    
+    const columnId = parseInt(idParam, 10);
 
     // Validar columnId
     if (isNaN(columnId) || columnId <= 0) {
-      return res.status(400).json({ error: 'ID da coluna inválido' });
+      console.error('ID inválido:', idParam, 'convertido para:', columnId);
+      return res.status(400).json({ error: `ID da coluna inválido: ${idParam}` });
     }
 
     // Verificar se a coluna pertence ao usuário
@@ -154,7 +165,19 @@ router.put('/columns/:id', authenticate, async (req: AuthRequest, res) => {
 // Delete a column
 router.delete('/columns/:id', authenticate, async (req: AuthRequest, res) => {
   try {
-    const columnId = parseInt(req.params.id);
+    const idParam = req.params.id;
+    
+    // Validar que o parâmetro existe
+    if (!idParam || idParam.trim() === '') {
+      return res.status(400).json({ error: 'ID da coluna não fornecido' });
+    }
+    
+    const columnId = parseInt(idParam, 10);
+    
+    // Validar columnId
+    if (isNaN(columnId) || columnId <= 0) {
+      return res.status(400).json({ error: `ID da coluna inválido: ${idParam}` });
+    }
 
     // Verificar se a coluna pertence ao usuário
     const existing = await pool.query(
