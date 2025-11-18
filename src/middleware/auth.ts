@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 
 export interface AuthRequest extends Request {
   userId?: number;
+  businessId?: number;
 }
 
 export const authenticate = (

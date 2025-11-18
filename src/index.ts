@@ -6,6 +6,8 @@ import { taskRoutes } from './routes/tasks';
 import { paymentRoutes } from './routes/payments';
 import { reportRoutes } from './routes/reports';
 import kanbanRoutes from './routes/kanban';
+import businessRoutes from './routes/business';
+import ticketRoutes from './routes/tickets';
 import { errorHandler } from './middleware/errorHandler';
 import { initDatabase } from './db';
 
@@ -30,6 +32,8 @@ app.use('/api/tasks', taskRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/kanban', kanbanRoutes);
+app.use('/api/business', businessRoutes);
+app.use('/api/tickets', ticketRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Task Organizer API is running' });

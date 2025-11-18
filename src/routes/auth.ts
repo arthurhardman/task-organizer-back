@@ -8,6 +8,36 @@ import { getUserCredits, initializeCredits } from '../utils/credits';
 
 const router = express.Router();
 
+// Função auxiliar para extrair domínio do email e criar/obter business
+async function getOrCreateBusiness(email: string): Promise<number | null> {
+  try {
+    // Extrair domínio do email (tudo depois do @)
+    const domain = email.split('@')[1]?.toLowerCase();
+    if (!domain) return null;
+
+    // Verificar se business já existe
+    const existingBusiness = await pool.query(
+      'SELECT id FROM businesses WHERE domain = $1',
+      [domain]
+    );
+
+    if (existingBusiness.rows.length > 0) {
+      return existingBusiness.rows[0].id;
+    }
+
+    // Criar novo business
+    const newBusiness = await pool.query(
+      'INSERT INTO businesses (name, domain) VALUES ($1, $2) RETURNING id',
+      [domain.split('.')[0] || domain, domain] // Usar primeira parte do domínio como nome
+    );
+
+    return newBusiness.rows[0].id;
+  } catch (error) {
+    console.error('Error getting/creating business:', error);
+    return null;
+  }
+}
+
 // Register
 router.post('/register', async (req, res) => {
   try {
@@ -19,9 +49,22 @@ router.post('/register', async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Obter ou criar business baseado no domínio do email
+    const businessId = await getOrCreateBusiness(email);
+    
+    // Verificar se é o primeiro usuário do business (será admin)
+    let isAdmin = false;
+    if (businessId) {
+      const existingUsers = await pool.query(
+        'SELECT COUNT(*) FROM users WHERE business_id = $1',
+        [businessId]
+      );
+      isAdmin = parseInt(existingUsers.rows[0].count) === 0;
+    }
+
     const result = await pool.query(
-      'INSERT INTO users (email, password_hash, name, credits) VALUES ($1, $2, $3, $4) RETURNING id, email, name',
-      [email, hashedPassword, name, 25] // 25 créditos iniciais
+      'INSERT INTO users (email, password_hash, name, credits, business_id, is_admin) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, name, business_id, is_admin',
+      [email, hashedPassword, name, 25, businessId, isAdmin] // 25 créditos iniciais
     );
 
     const user = result.rows[0];
@@ -38,6 +81,8 @@ router.post('/register', async (req, res) => {
         isPremium: false,
         language: 'pt',
         credits: 25,
+        isAdmin: user.is_admin,
+        businessId: user.business_id,
       },
       token 
     });
@@ -45,6 +90,7 @@ router.post('/register', async (req, res) => {
     if (error.code === '23505') {
       return res.status(400).json({ error: 'Email já cadastrado' });
     }
+    console.error('Register error:', error);
     res.status(500).json({ error: 'Erro ao criar usuário' });
   }
 });
@@ -59,7 +105,7 @@ router.post('/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT id, email, password_hash, name, is_premium, language FROM users WHERE email = $1',
+      'SELECT id, email, password_hash, name, is_premium, language, business_id, is_admin FROM users WHERE email = $1',
       [email]
     );
 
@@ -96,6 +142,8 @@ router.post('/login', async (req, res) => {
         isPremium: isPremium,
         language: user.language,
         credits: credits,
+        isAdmin: user.is_admin || false,
+        businessId: user.business_id || null,
       },
       token,
     });
@@ -117,7 +165,7 @@ router.get('/me', authenticate, async (req, res) => {
     const credits = await getUserCredits(authReq.userId);
     
     const result = await pool.query(
-      'SELECT id, email, name, language FROM users WHERE id = $1',
+      'SELECT id, email, name, language, business_id, is_admin FROM users WHERE id = $1',
       [authReq.userId]
     );
 
@@ -132,6 +180,8 @@ router.get('/me', authenticate, async (req, res) => {
       isPremium: isPremium,
       language: result.rows[0].language,
       credits: credits,
+      isAdmin: result.rows[0].is_admin || false,
+      businessId: result.rows[0].business_id || null,
     });
   } catch (error) {
     res.status(500).json({ error: 'Erro ao buscar usuário' });
